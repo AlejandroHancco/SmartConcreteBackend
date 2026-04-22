@@ -1,0 +1,128 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Role {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(50)
+  permissions RolePermission[]
+  userProjectRoles UserProjectRole[]
+}
+
+model Permission {
+  id          String   @id @db.VarChar(100)
+  description String?  @db.Text
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  roleId       Int
+  permissionId String   @db.VarChar(100)
+  role         Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model User {
+  uuid             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String   @db.VarChar(100)
+  email            String   @unique @db.VarChar(255)
+  lastName         String?  @db.VarChar(100)
+  password         String   @db.VarChar(255)
+  createdAt        DateTime @default(now()) @db.Timestamp(6)
+  userProjectRoles UserProjectRole[]
+  taskPreferences  TaskPreference[]
+  measurements     Measurement[]
+}
+
+model Project {
+  uuid             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String   @db.VarChar(150)
+  description      String?  @db.VarChar(500)
+  createdAt        DateTime @default(now()) @db.Timestamp(6)
+  userProjectRoles UserProjectRole[]
+  tasks            Task[]
+}
+
+model UserProjectRole {
+  userId     String   @db.Uuid
+  projectId  String   @db.Uuid
+  roleId     Int
+  assignedAt DateTime @default(now()) @db.Timestamp(6)
+  user       User     @relation(fields: [userId], references: [uuid], onDelete: Cascade)
+  project    Project  @relation(fields: [projectId], references: [uuid], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@id([userId, projectId])
+}
+
+model Device {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String   @db.VarChar(150)
+  type       String?  @db.VarChar(50)
+  ip         String?  @db.VarChar(45)
+  createdAt  DateTime @default(now()) @db.Timestamp(6)
+  taskPreferencesAnalyzer TaskPreference[] @relation("AnalyzerDevice")
+  taskPreferencesMux      TaskPreference[] @relation("MuxDevice")
+}
+
+model Task {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(150)
+  description String?  @db.VarChar(500)
+  status      String?  @default("pending") @db.VarChar(50)
+  points      Decimal? @db.Decimal
+  startFreq   Decimal  @db.Decimal
+  stopFreq    Decimal  @db.Decimal
+  projectId   String   @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamp(6)
+  project     Project  @relation(fields: [projectId], references: [uuid], onDelete: Cascade)
+  taskPreferences TaskPreference[]
+  measurements Measurement[]
+}
+
+model TaskPreference {
+  id               Int      @id @default(autoincrement())
+  taskId           Int
+  analyzerName     String   @db.VarChar(150)
+  analyzerIp       String   @db.VarChar(45)
+  analyzerDeviceId String?  @db.Uuid
+  muxName          String   @db.VarChar(150)
+  muxIp            String   @db.VarChar(45)
+  muxDeviceId      String?  @db.Uuid
+  startFreq        Decimal  @db.Decimal
+  stopFreq         Decimal  @db.Decimal
+  createdAt        DateTime @default(now()) @db.Timestamp(6)
+  createdBy        String?  @db.Uuid
+  task             Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  analyzerDevice   Device?  @relation("AnalyzerDevice", fields: [analyzerDeviceId], references: [id], onDelete: SetNull)
+  muxDevice        Device?  @relation("MuxDevice", fields: [muxDeviceId], references: [id], onDelete: SetNull)
+  createdByUser    User?    @relation(fields: [createdBy], references: [uuid], onDelete: SetNull)
+  measurements     Measurement[]
+}
+
+model Measurement {
+  id                 Int      @id @default(autoincrement())
+  taskId             Int
+  takenBy            String   @db.Uuid
+  takenAt            DateTime @default(now()) @db.Timestamp(6)
+  startFreq          Decimal  @db.Decimal
+  stopFreq           Decimal  @db.Decimal
+  analyzerName       String   @db.VarChar(150)
+  analyzerIp         String   @db.VarChar(45)
+  muxName            String   @db.VarChar(150)
+  muxIp              String   @db.VarChar(45)
+  taskPreferenceId   Int?
+  data               Json     @db.JsonB
+  task               Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  takenByUser        User     @relation(fields: [takenBy], references: [uuid], onDelete: Restrict)
+  taskPreference     TaskPreference? @relation(fields: [taskPreferenceId], references: [id], onDelete: SetNull)
+}
