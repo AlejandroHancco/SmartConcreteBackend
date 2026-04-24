@@ -11,6 +11,7 @@ import {
 import { DevicesService } from './devices.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
+import { TestConnectionDto } from './dto/test-connection.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 
@@ -47,5 +48,11 @@ export class DevicesController {
   @RequirePermission('devices:delete')
   remove(@Param('id') id: string) {
     return this.devicesService.remove(id);
+  }
+
+  @Post('test-connection')
+  @RequirePermission('devices:read')
+  testConnection(@Body() testConnectionDto: TestConnectionDto) {
+    return this.devicesService.testConnection(testConnectionDto);
   }
 }

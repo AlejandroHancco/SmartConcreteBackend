@@ -41,9 +41,19 @@ export class MeasurementsService {
   }
 
   async findOne(id: number) {
-    return this.prisma.measurement.findUnique({
+    const measurement = await this.prisma.measurement.findUnique({
       where: { id },
     });
+
+    if (!measurement) {
+      return null;
+    }
+
+    return {
+      ...measurement,
+      startFreq: Number(measurement.startFreq),
+      stopFreq: Number(measurement.stopFreq),
+    };
   }
 
   async update(id: number, updateMeasurementDto: UpdateMeasurementDto) {
