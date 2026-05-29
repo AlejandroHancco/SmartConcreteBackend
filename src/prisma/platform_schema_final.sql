@@ -54,7 +54,7 @@ CREATE TABLE platform.role_permissions (
                                            PRIMARY KEY (role_id, permission_id)
 );
 
--- admin (id=1): todo
+-- admin (id=1):
 INSERT INTO platform.role_permissions (role_id, permission_id)
 SELECT 1, id FROM platform.permissions;
 

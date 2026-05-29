@@ -10,16 +10,24 @@ datasource db {
   provider = "postgresql"
   schemas  = ["platform"]
 }
-
+enum DeviceStatus {
+  online
+  offline
+  unchecked
+  @@schema("platform")
+}
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model Device {
   id                    String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId             String             @db.Uuid
   name                  String             @db.VarChar(150)
   type                  String?            @db.VarChar(50)
   ip                    String?            @db.VarChar(45)
   createdAt             DateTime?          @default(now()) @db.Timestamptz(6)
+  project               Project            @relation(fields: [projectId], references: [uuid], onDelete: Cascade)
   analyzerTaskPreferences TaskPreference[] @relation("analyzerDevice")
   muxTaskPreferences      TaskPreference[] @relation("muxDevice")
+  status                  DeviceStatus       @default(offline)
 
   @@map("devices")
   @@schema("platform")
@@ -30,18 +38,36 @@ model Measurement {
   id                 Int               @id @default(autoincrement())
   taskId             Int
   takenBy            String            @db.Uuid
+  takenByName        String?           @db.VarChar(200)
+  takenByEmail       String?           @db.VarChar(255)
   takenAt            DateTime?         @default(now()) @db.Timestamptz(6)
+  scheduledJobId    Int?               // null si fue manual
+  executionIndex    Int?               // qué repetición fue: 1, 2, 3...
+
+  // Snapshot del preset usado
+  presetName         String?           @db.VarChar(100)
   startFreq          Decimal           @db.Decimal
   stopFreq           Decimal           @db.Decimal
+  points             Int
+  sweepType          String            @db.VarChar(20)
+
+  // Snapshot de Analyzer
   analyzerName       String            @db.VarChar(150)
   analyzerIp         String            @db.VarChar(45)
+
+  // Snapshot de Mux
   muxName            String            @db.VarChar(150)
   muxIp              String            @db.VarChar(45)
-  taskPreferenceId   Int?
+
+  // Data JSONB con estructura: { frequencies: [...], channels: { "1": {g, b}, ... } }
   data               Json
+
+  // Relations
   takenByUser        User              @relation(fields: [takenBy], references: [uuid], onUpdate: NoAction)
   task               Task              @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  taskPreference     TaskPreference?   @relation(fields: [taskPreferenceId], references: [id], onUpdate: NoAction)
+  scheduledJob      ScheduledJob?  @relation(fields: [scheduledJobId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  measurementChannels MeasurementChannel[]
 
   @@index([data], map: "idx_measurements_data_gin", type: Gin)
   @@index([taskId, takenAt(sort: Desc)], map: "idx_measurements_task_taken")
@@ -58,12 +84,27 @@ model Permission {
   @@schema("platform")
 }
 
+
+enum ProjectStatus {
+  draft
+  active
+  inactive
+  in_progress
+  completed
+  cancelled
+  archived
+
+  @@schema("platform")
+}
+
 model Project {
   uuid               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name               String               @db.VarChar(150)
   description        String?              @db.VarChar(500)
   createdAt          DateTime?            @default(now()) @db.Timestamptz(6)
+  devices            Device[]
   tasks              Task[]
+  status             ProjectStatus        @default(draft)
   userProjectRoles   UserProjectRole[]
 
   @@map("projects")
@@ -93,23 +134,21 @@ model Role {
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model TaskPreference {
-  id               Int            @id @default(autoincrement())
-  taskId           Int
-  analyzerName     String         @db.VarChar(150)
-  analyzerIp       String         @db.VarChar(45)
-  analyzerDeviceId String?        @db.Uuid
-  muxName          String         @db.VarChar(150)
-  muxIp            String         @db.VarChar(45)
-  muxDeviceId      String?        @db.Uuid
-  startFreq        Decimal        @db.Decimal
-  stopFreq         Decimal        @db.Decimal
-  createdAt        DateTime?      @default(now()) @db.Timestamptz(6)
-  createdBy        String?        @db.Uuid
-  measurements     Measurement[]
-  analyzerDevice   Device?        @relation("analyzerDevice", fields: [analyzerDeviceId], references: [id], onUpdate: NoAction)
-  createdByUser    User?          @relation(fields: [createdBy], references: [uuid], onUpdate: NoAction)
-  muxDevice        Device?        @relation("muxDevice", fields: [muxDeviceId], references: [id], onUpdate: NoAction)
-  task             Task           @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id               Int       @id @default(autoincrement())
+  taskId           Int       @unique
+  name             String    @db.VarChar(100)
+  analyzerDeviceId String    @db.Uuid
+  muxDeviceId      String    @db.Uuid
+  startFreq        Decimal   @db.Decimal
+  stopFreq         Decimal   @db.Decimal
+  points           Int       @default(801)
+  sweepType        String    @default("LIN") @db.VarChar(20)
+  createdAt        DateTime? @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime? @updatedAt @db.Timestamptz(6)
+
+  analyzerDevice Device @relation("analyzerDevice", fields: [analyzerDeviceId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  muxDevice      Device @relation("muxDevice", fields: [muxDeviceId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  task           Task   @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([taskId, createdAt(sort: Desc)], map: "idx_task_preferences_task_created")
   @@map("task_preferences")
@@ -118,20 +157,73 @@ model TaskPreference {
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model Task {
-  id               Int                @id @default(autoincrement())
-  name             String             @db.VarChar(150)
-  description      String?            @db.VarChar(500)
-  status           String?            @default("pending") @db.VarChar(50)
-  points           Decimal?           @db.Decimal
-  startFreq        Decimal            @db.Decimal
-  stopFreq         Decimal            @db.Decimal
-  projectId        String             @db.Uuid
-  createdAt        DateTime?          @default(now()) @db.Timestamptz(6)
-  measurements     Measurement[]
-  taskPreferences  TaskPreference[]
-  project          Project            @relation(fields: [projectId], references: [uuid], onDelete: Cascade, onUpdate: NoAction)
+  id              Int       @id @default(autoincrement())
+  name            String    @db.VarChar(150)
+  description     String?   @db.VarChar(500)
+  status          String?   @default("pending") @db.VarChar(50)
+  projectId       String    @db.Uuid
+  createdAt       DateTime? @default(now()) @db.Timestamptz(6)
+
+  measurements    Measurement[]
+  taskPreferences TaskPreference[]
+  taskChannels    TaskChannel[]
+  project         Project   @relation(fields: [projectId], references: [uuid], onDelete: Cascade, onUpdate: NoAction)
+  scheduledJobs   ScheduledJob[]
 
   @@map("tasks")
+  @@schema("platform")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model TaskChannel {
+  id            Int       @id @default(autoincrement())
+  taskId        Int
+  channelNumber Int
+  alias         String    @db.VarChar(100)
+
+  // metadata de la muestra física
+  concreteMix   Decimal?  @db.Decimal
+  hasEmulsifier Boolean?  @default(false)
+  notes         String?   @db.VarChar(500)
+  sampleAge     Int?
+  temperature   Decimal?  @db.Decimal
+  humidity      Decimal?  @db.Decimal
+
+  createdAt     DateTime? @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime? @updatedAt @db.Timestamptz(6)
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([taskId, channelNumber])
+  @@map("task_channels")
+  @@schema("platform")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model MeasurementChannel {
+  id              Int       @id @default(autoincrement())
+  measurementId   Int
+  channelNumber   Int
+
+  // Snapshot del nick al momento de medir
+  channelAlias    String?   @db.VarChar(100)
+
+  // Metadata del canal en esta medición
+  concreteMix     Decimal?  @db.Decimal
+  hasEmulsifier   Boolean?  @default(false)
+  notes           String?   @db.VarChar(500)
+
+  // Campos para ML futuro
+  sampleAge       Int?
+  temperature     Decimal?  @db.Decimal
+  humidity        Decimal?  @db.Decimal
+
+  createdAt       DateTime? @default(now()) @db.Timestamptz(6)
+
+  measurement     Measurement @relation(fields: [measurementId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([measurementId, channelNumber])
+  @@map("measurement_channels")
   @@schema("platform")
 }
 
@@ -157,9 +249,41 @@ model User {
   password         String               @db.VarChar(255)
   createdAt        DateTime?            @default(now()) @db.Timestamptz(6)
   measurements     Measurement[]
-  taskPreferences  TaskPreference[]
   userProjectRoles UserProjectRole[]
+  scheduledJobs   ScheduledJob[]
 
   @@map("users")
+  @@schema("platform")
+}
+
+enum ScheduledJobStatus {
+  pending
+  running
+  completed
+  failed
+  cancelled
+  @@schema("platform")
+}
+
+model ScheduledJob {
+  id               Int                @id @default(autoincrement())
+  taskId           Int
+  createdBy        String             @db.Uuid
+  label            String?            @db.VarChar(150)
+
+  startAt          DateTime           @db.Timestamptz(6)
+  intervalMinutes  Int?               // null = one-shot
+  repeatCount      Int                @default(1)
+
+  status           ScheduledJobStatus @default(pending)
+  createdAt        DateTime?          @default(now()) @db.Timestamptz(6)
+
+  task          Task    @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  createdByUser User    @relation(fields: [createdBy], references: [uuid], onDelete: Restrict, onUpdate: NoAction)
+  channelNumbers   Int[]   @default([])
+  measurements     Measurement[]
+
+  @@index([taskId, startAt(sort: Asc)], map: "idx_scheduled_jobs_task_start")
+  @@map("scheduled_jobs")
   @@schema("platform")
 }

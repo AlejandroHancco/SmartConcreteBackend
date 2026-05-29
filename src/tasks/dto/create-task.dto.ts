@@ -12,16 +12,6 @@ export class CreateTaskDto {
   @IsString()
   status?: string;
 
-  @IsOptional()
-  @IsNumber()
-  points?: number;
-
-  @IsNumber()
-  startFreq: number;
-
-  @IsNumber()
-  stopFreq: number;
-
   @IsUUID()
   projectId: string;
 }

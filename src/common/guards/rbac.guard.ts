@@ -15,6 +15,7 @@ export class RbacGuard implements CanActivate {
       REQUIRE_PERMISSION_KEY,
       context.getHandler(),
     );
+
     if (!permission) {
       return true;
     }
@@ -26,7 +27,25 @@ export class RbacGuard implements CanActivate {
     }
 
     // Obtener projectId del param o body
-    const projectId = request.params.projectId || request.body.projectId;
+    let projectId = request.params.projectId || request.body.projectId;
+
+    if (!projectId && request.params.id) {
+      // Buscar el projectId a partir del taskId
+      const task = await this.prisma.task.findUnique({
+        where: { id: Number(request.params.id) },
+        select: { projectId: true },
+      });
+      projectId = task?.projectId;
+    }
+
+    if (!projectId && request.params.id && request.path.includes('/devices')) {
+      const device = await this.prisma.device.findUnique({
+        where: { id: request.params.id },
+        select: { projectId: true },
+      });
+      projectId = device?.projectId;
+    }
+
     if (!projectId) {
       return false;
     }

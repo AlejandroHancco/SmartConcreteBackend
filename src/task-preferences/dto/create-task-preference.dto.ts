@@ -1,36 +1,43 @@
-import { IsString, IsOptional, IsNumber, IsUUID } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class CreateTaskPreferenceDto {
-  @IsNumber()
-  taskId: number;
-
   @IsString()
-  analyzerName: string;
+  @IsNotEmpty()
+  @MaxLength(100)
+  name: string;
 
-  @IsString()
-  analyzerIp: string;
-
-  @IsOptional()
   @IsUUID()
-  analyzerDeviceId?: string;
+  analyzerDeviceId: string;
 
-  @IsString()
-  muxName: string;
-
-  @IsString()
-  muxIp: string;
-
-  @IsOptional()
   @IsUUID()
-  muxDeviceId?: string;
+  muxDeviceId: string;
 
   @IsNumber()
+  @Min(1)
   startFreq: number;
 
   @IsNumber()
+  @Min(1)
   stopFreq: number;
 
   @IsOptional()
-  @IsUUID()
-  createdBy?: string;
+  @IsInt()
+  @Min(1)
+  @Max(801)
+  points?: number;
+
+  @IsOptional()
+  @IsIn(['LOG', 'LIN'])
+  sweepType?: string;
 }

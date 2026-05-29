@@ -1,4 +1,4 @@
-import { IsNumber, IsEnum } from 'class-validator';
+import {IsNumber, IsEnum, IsOptional, IsString, IsArray, Min, Max} from 'class-validator';
 
 export class MeasureDto {
   @IsNumber()
@@ -12,4 +12,14 @@ export class MeasureDto {
 
   @IsEnum(['LOG', 'LIN'])
   sweepType: 'LOG' | 'LIN';
+
+  @IsArray()
+  @IsNumber({}, { each: true })
+  @Min(1, { each: true })
+  @Max(16, { each: true })
+  selectedChannels: number[];
+
+  @IsOptional()
+  @IsString()
+  jobId?: string;
 }

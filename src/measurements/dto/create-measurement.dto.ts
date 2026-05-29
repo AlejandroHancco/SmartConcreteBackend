@@ -7,11 +7,21 @@ export class CreateMeasurementDto {
   @IsUUID()
   takenBy: string;
 
+  @IsOptional()
+  @IsString()
+  presetName?: string;
+
   @IsNumber()
   startFreq: number;
 
   @IsNumber()
   stopFreq: number;
+
+  @IsNumber()
+  points: number;
+
+  @IsString()
+  sweepType: string;
 
   @IsString()
   analyzerName: string;
@@ -25,9 +35,6 @@ export class CreateMeasurementDto {
   @IsString()
   muxIp: string;
 
-  @IsOptional()
-  @IsNumber()
-  taskPreferenceId?: number;
 
   @IsObject()
   data: any; // JSONB

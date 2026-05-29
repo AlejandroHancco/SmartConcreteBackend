@@ -1,57 +1,53 @@
 import {
-  Controller,
-  Get,
-  Post,
   Body,
-  Patch,
-  Param,
+  Controller,
   Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Put,
   UseGuards,
 } from '@nestjs/common';
-import { TaskPreferencesService } from './task-preferences.service';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CreateTaskPreferenceDto } from './dto/create-task-preference.dto';
 import { UpdateTaskPreferenceDto } from './dto/update-task-preference.dto';
-import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
+import { TaskPreferencesService } from './task-preferences.service';
 
-@Controller('task-preferences')
+@Controller('tasks')
 @UseGuards(JwtAuthGuard)
 export class TaskPreferencesController {
   constructor(private readonly taskPreferencesService: TaskPreferencesService) {}
 
-  @Post()
-  @RequirePermission('tasks:update') // Asumiendo que crear preferencias es parte de actualizar tareas
-  create(@Body() createTaskPreferenceDto: CreateTaskPreferenceDto) {
-    return this.taskPreferencesService.create(createTaskPreferenceDto);
+  @Get(':taskId/preference')
+  getTaskPreference(@Param('taskId', ParseIntPipe) taskId: number) {
+    return this.taskPreferencesService.getTaskPreference(taskId);
   }
 
-  @Get()
-  @RequirePermission('tasks:read')
-  findAll() {
-    return this.taskPreferencesService.findAll();
+  @Post(':taskId/preference')
+  createTaskPreference(
+    @Param('taskId', ParseIntPipe) taskId: number,
+    @Body() createTaskPreferenceDto: CreateTaskPreferenceDto,
+  ) {
+    return this.taskPreferencesService.createTaskPreference(
+      taskId,
+      createTaskPreferenceDto,
+    );
   }
 
-  @Get('active/:taskId')
-  @RequirePermission('tasks:read')
-  getActivePreference(@Param('taskId') taskId: string) {
-    return this.taskPreferencesService.getActivePreference(+taskId);
+  @Put(':taskId/preference')
+  updateTaskPreference(
+    @Param('taskId', ParseIntPipe) taskId: number,
+    @Body() updateTaskPreferenceDto: UpdateTaskPreferenceDto,
+  ) {
+    return this.taskPreferencesService.updateTaskPreference(
+      taskId,
+      updateTaskPreferenceDto,
+    );
   }
 
-  @Get(':id')
-  @RequirePermission('tasks:read')
-  findOne(@Param('id') id: string) {
-    return this.taskPreferencesService.findOne(+id);
-  }
-
-  @Patch(':id')
-  @RequirePermission('tasks:update')
-  update(@Param('id') id: string, @Body() updateTaskPreferenceDto: UpdateTaskPreferenceDto) {
-    return this.taskPreferencesService.update(+id, updateTaskPreferenceDto);
-  }
-
-  @Delete(':id')
-  @RequirePermission('tasks:delete')
-  remove(@Param('id') id: string) {
-    return this.taskPreferencesService.remove(+id);
+  @Delete(':taskId/preference')
+  removeTaskPreference(@Param('taskId', ParseIntPipe) taskId: number) {
+    return this.taskPreferencesService.removeTaskPreference(taskId);
   }
 }

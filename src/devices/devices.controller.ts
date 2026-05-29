@@ -2,10 +2,10 @@ import {
   Controller,
   Get,
   Post,
-  Body,
   Patch,
-  Param,
   Delete,
+  Body,
+  Param,
   UseGuards,
 } from '@nestjs/common';
 import { DevicesService } from './devices.service';
@@ -13,46 +13,66 @@ import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { TestConnectionDto } from './dto/test-connection.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
-@Controller('devices')
+// ── GET /devices  &  POST /devices/test-connection ────────────────────────────
 @UseGuards(JwtAuthGuard)
+@Controller('devices')
 export class DevicesController {
   constructor(private readonly devicesService: DevicesService) {}
 
-  @Post()
-  @RequirePermission('devices:create')
-  create(@Body() createDeviceDto: CreateDeviceDto) {
-    return this.devicesService.create(createDeviceDto);
-  }
-
   @Get()
-  @RequirePermission('devices:read')
-  findAll() {
-    return this.devicesService.findAll();
-  }
-
-  @Get(':id')
-  @RequirePermission('devices:read')
-  findOne(@Param('id') id: string) {
-    return this.devicesService.findOne(id);
-  }
-
-  @Patch(':id')
-  @RequirePermission('devices:update')
-  update(@Param('id') id: string, @Body() updateDeviceDto: UpdateDeviceDto) {
-    return this.devicesService.update(id, updateDeviceDto);
-  }
-
-  @Delete(':id')
-  @RequirePermission('devices:delete')
-  remove(@Param('id') id: string) {
-    return this.devicesService.remove(id);
+  findAll(@CurrentUser() user: { uuid: string }) {
+    return this.devicesService.findAllForUser(user.uuid);
   }
 
   @Post('test-connection')
-  @RequirePermission('devices:read')
-  testConnection(@Body() testConnectionDto: TestConnectionDto) {
-    return this.devicesService.testConnection(testConnectionDto);
+  testConnection(@Body() dto: TestConnectionDto) {
+    return this.devicesService.testConnection(dto);
+  }
+}
+
+// ── /projects/:projectId/devices/* ────────────────────────────────────────────
+@UseGuards(JwtAuthGuard)
+@Controller('projects/:projectId/devices')
+export class ProjectDevicesController {
+  constructor(private readonly devicesService: DevicesService) {}
+
+  @Get()
+  findByProject(@Param('projectId') projectId: string) {
+    return this.devicesService.findByProject(projectId);
+  }
+
+  @Post()
+  createInProject(
+      @Param('projectId') projectId: string,
+      @Body() dto: CreateDeviceDto,
+  ) {
+    return this.devicesService.createInProject(projectId, dto);
+  }
+
+  @Get(':deviceId')
+  findOne(
+      @Param('projectId') projectId: string,
+      @Param('deviceId') deviceId: string,
+  ) {
+    return this.devicesService.findOneInProject(projectId, deviceId);
+  }
+
+  @Patch(':deviceId')
+  update(
+      @Param('projectId') projectId: string,
+      @Param('deviceId') deviceId: string,
+      @Body() dto: UpdateDeviceDto,
+  ) {
+    return this.devicesService.updateInProject(projectId, deviceId, dto);
+  }
+
+  @Delete(':deviceId')
+  remove(
+      @Param('projectId') projectId: string,
+      @Param('deviceId') deviceId: string,
+  ) {
+    return this.devicesService.removeFromProject(projectId, deviceId);
   }
 }

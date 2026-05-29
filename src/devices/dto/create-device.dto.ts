@@ -1,14 +1,16 @@
-import { IsString, IsOptional } from 'class-validator';
+import { IsString, IsOptional, IsIn, IsNotEmpty, IsIP, MaxLength } from 'class-validator';
 
 export class CreateDeviceDto {
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(150)
   name: string;
 
-  @IsOptional()
-  @IsString()
-  type?: string;
+  @IsIn(['analyzer', 'mux'])
+  @IsNotEmpty()
+  type: string;
 
+  @IsIP()
   @IsOptional()
-  @IsString()
   ip?: string;
 }

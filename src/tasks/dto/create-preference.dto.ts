@@ -2,28 +2,25 @@ import { IsString, IsOptional, IsUUID, IsNumber } from 'class-validator';
 
 export class CreatePreferenceDto {
   @IsString()
-  analyzerName: string;
+  name: string;
 
-  @IsString()
-  analyzerIp: string;
-
-  @IsOptional()
   @IsUUID()
-  analyzerDeviceId?: string;
+  analyzerDeviceId: string;
 
-  @IsString()
-  muxName: string;
-
-  @IsString()
-  muxIp: string;
-
-  @IsOptional()
   @IsUUID()
-  muxDeviceId?: string;
+  muxDeviceId: string;
 
   @IsNumber()
   startFreq: number;
 
   @IsNumber()
   stopFreq: number;
+
+  @IsOptional()
+  @IsNumber()
+  points?: number;
+
+  @IsOptional()
+  @IsString()
+  sweepType?: string;
 }

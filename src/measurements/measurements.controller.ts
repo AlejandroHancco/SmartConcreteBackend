@@ -11,6 +11,7 @@ import {
 import { MeasurementsService } from './measurements.service';
 import { CreateMeasurementDto } from './dto/create-measurement.dto';
 import { UpdateMeasurementDto } from './dto/update-measurement.dto';
+import { UpdateMeasurementChannelDto } from './dto/update-measurement-channel.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 
@@ -53,5 +54,19 @@ export class MeasurementsController {
   @RequirePermission('measurements:delete')
   remove(@Param('id') id: string) {
     return this.measurementsService.remove(+id);
+  }
+
+  @Patch(':id/channels/:channelNumber')
+  @RequirePermission('measurements:update')
+  updateMeasurementChannel(
+    @Param('id') id: string,
+    @Param('channelNumber') channelNumber: string,
+    @Body() updateMeasurementChannelDto: UpdateMeasurementChannelDto,
+  ) {
+    return this.measurementsService.updateMeasurementChannelMetadata(
+      +id,
+      +channelNumber,
+      updateMeasurementChannelDto,
+    );
   }
 }
