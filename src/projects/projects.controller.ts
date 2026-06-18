@@ -10,6 +10,7 @@ import {
     Query,
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { NormalizedUser } from '../auth/interfaces/auth.interface';
 import { ProjectsService } from './projects.service';
 import { TasksService } from '../tasks/tasks.service';
 import { DevicesService } from '../devices/devices.service';
@@ -18,11 +19,11 @@ import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { CreateDeviceDto } from '../devices/dto/create-device.dto';
 import { UpdateDeviceDto } from '../devices/dto/update-device.dto';
-import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { CombinedAuthGuard } from '../auth/combined-auth.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 
 @Controller('projects')
-@UseGuards(JwtAuthGuard)
+@UseGuards(CombinedAuthGuard)
 export class ProjectsController {
     constructor(
         private readonly projectsService: ProjectsService,
@@ -34,10 +35,10 @@ export class ProjectsController {
 
     @Get('count')
     countByRole(
-        @CurrentUser() user: { uuid: string },
+        @CurrentUser() user: NormalizedUser,
         @Query('role') role: string,
     ) {
-        return this.projectsService.countProjectsByRole(user.uuid, role);
+        return this.projectsService.countProjectsByRole(user.id, role);
     }
 
     // ── Proyectos ──────────────────────────────────────────────────────────────
@@ -46,9 +47,9 @@ export class ProjectsController {
     @RequirePermission('projects:create')
     create(
         @Body() createProjectDto: CreateProjectDto,
-        @CurrentUser() user: { uuid: string },
+        @CurrentUser() user: NormalizedUser,
     ) {
-        return this.projectsService.create(createProjectDto, user.uuid);
+        return this.projectsService.create(createProjectDto, user.id);
     }
 
     @Get()

@@ -1,4 +1,4 @@
-import { Controller, Request, Post, Get, UseGuards, Body } from '@nestjs/common';
+import { Controller, Request, Post, Get, UseGuards, Body, Query, BadRequestException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CreateUserDto } from '../users/dto/create-user.dto';
@@ -26,10 +26,16 @@ export class AuthController {
     );
   }
 
+  @Get('check-email')
+  checkEmail(@Query('email') email: string) {
+    if (!email) throw new BadRequestException('Email is required');
+    return this.authService.checkEmail(email);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('me')
   async getMe(@Request() req) {
-    return this.authService.getProfile(req.user.uuid);
+    return this.authService.getProfile(req.user.id);
   }
 
   @UseGuards(JwtAuthGuard)

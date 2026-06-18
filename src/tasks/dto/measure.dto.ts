@@ -1,4 +1,4 @@
-import {IsNumber, IsEnum, IsOptional, IsString, IsArray, Min, Max} from 'class-validator';
+import {IsNumber, IsEnum, IsOptional, IsString, IsArray, Min, Max, IsInt} from 'class-validator';
 
 export class MeasureDto {
   @IsNumber()
@@ -22,4 +22,6 @@ export class MeasureDto {
   @IsOptional()
   @IsString()
   jobId?: string;
+
+  @IsOptional() @IsInt() rangeId?: number;
 }

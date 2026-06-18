@@ -4,23 +4,30 @@ import {
   Post,
   Body,
   Patch,
+  Put,
   Param,
   Delete,
   UseGuards,
   Request,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
-import { CreatePreferenceDto } from './dto/create-preference.dto';
 import { MeasureDto } from './dto/measure.dto';
+import { TaskPreferencesService } from '../task-preferences/task-preferences.service';
+import { CreateTaskPreferenceDto } from '../task-preferences/dto/create-task-preference.dto';
+import { UpdateTaskPreferenceDto } from '../task-preferences/dto/update-task-preference.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 
 @Controller('tasks')
 @UseGuards(JwtAuthGuard)
 export class TasksController {
-  constructor(private readonly tasksService: TasksService) {}
+  constructor(
+    private readonly tasksService: TasksService,
+    private readonly taskPreferencesService: TaskPreferencesService,
+  ) {}
 
   @Post()
   @RequirePermission('tasks:create')
@@ -54,28 +61,38 @@ export class TasksController {
 
   @Get(':id/preference')
   @RequirePermission('tasks:read')
-  getPreference(@Param('id') id: string) {
-    return this.tasksService.getActivePreference(+id);
+  getPreference(@Param('id', ParseIntPipe) id: number) {
+    return this.taskPreferencesService.getTaskPreference(id);
   }
 
   @Post(':id/preference')
   @RequirePermission('tasks:update')
   createPreference(
-    @Param('id') id: string,
-    @Body() createPreferenceDto: CreatePreferenceDto,
-    @Request() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateTaskPreferenceDto,
   ) {
-    return this.tasksService.createPreference(+id, createPreferenceDto, req.user.uuid);
+    return this.taskPreferencesService.createTaskPreference(id, dto);
+  }
+
+  @Put(':id/preference')
+  @RequirePermission('tasks:update')
+  updatePreference(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTaskPreferenceDto,
+  ) {
+    return this.taskPreferencesService.updateTaskPreference(id, dto);
+  }
+
+  @Delete(':id/preference')
+  @RequirePermission('tasks:delete')
+  removePreference(@Param('id', ParseIntPipe) id: number) {
+    return this.taskPreferencesService.removeTaskPreference(id);
   }
 
   @Post(':id/measure')
   @RequirePermission('measurements:create')
-  measure(
-    @Param('id') id: string,
-    @Body() measureDto: MeasureDto,
-    @Request() req: any,
-  ) {
-    return this.tasksService.measure(+id, measureDto, req.user.uuid);
+  measure(@Param('id') id: string, @Body() measureDto: MeasureDto, @Request() req: any) {
+    return this.tasksService.measure(+id, measureDto, req.user.id);
   }
 
   @Get(':id/measurements')

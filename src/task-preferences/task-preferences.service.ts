@@ -8,10 +8,14 @@ export interface TaskPreferenceResponse {
   id: number;
   taskId: number;
   name: string;
-  startFreq: number;
-  stopFreq: number;
-  points: number;
-  sweepType: string;
+  ranges: {
+    id: number;
+    order: number;
+    startFreq: number;
+    stopFreq: number;
+    points: number;
+    sweepType: string;
+  }[];
   createdAt: string;
   updatedAt: string;
   analyzerDevice: {
@@ -31,6 +35,7 @@ export interface TaskPreferenceResponse {
 type TaskPreferenceWithDevices = TaskPreference & {
   analyzerDevice: Device;
   muxDevice: Device;
+  ranges: any[];
 };
 
 @Injectable()
@@ -43,6 +48,9 @@ export class TaskPreferencesService {
       include: {
         analyzerDevice: true,
         muxDevice: true,
+        ranges: {
+          orderBy: { order: 'asc' },
+        },
       },
     });
 
@@ -86,11 +94,25 @@ export class TaskPreferencesService {
     const preference = await this.prisma.taskPreference.create({
       data: {
         taskId,
-        ...dto,
+        name: dto.name,
+        analyzerDeviceId: dto.analyzerDeviceId,
+        muxDeviceId: dto.muxDeviceId,
+        ranges: {
+          create: dto.ranges.map((r) => ({
+            order: r.order,
+            startFreq: r.startFreq,
+            stopFreq: r.stopFreq,
+            points: r.points,
+            sweepType: r.sweepType,
+          })),
+        },
       },
       include: {
         analyzerDevice: true,
         muxDevice: true,
+        ranges: {
+          orderBy: { order: 'asc' },
+        },
       },
     });
 
@@ -102,12 +124,30 @@ export class TaskPreferencesService {
     dto: UpdateTaskPreferenceDto,
   ): Promise<TaskPreferenceResponse> {
     try {
+      const { ranges, ...data } = dto;
       const preference = await this.prisma.taskPreference.update({
         where: { taskId },
-        data: dto,
+        data: {
+          ...data,
+          ranges: ranges
+            ? {
+                deleteMany: {},
+                create: ranges.map((r) => ({
+                  order: r.order,
+                  startFreq: r.startFreq,
+                  stopFreq: r.stopFreq,
+                  points: r.points,
+                  sweepType: r.sweepType,
+                })),
+              }
+            : undefined,
+        },
         include: {
           analyzerDevice: true,
           muxDevice: true,
+          ranges: {
+            orderBy: { order: 'asc' },
+          },
         },
       });
 
@@ -134,6 +174,7 @@ export class TaskPreferencesService {
         include: {
           analyzerDevice: true,
           muxDevice: true,
+          ranges: true,
         },
       });
 
@@ -160,10 +201,14 @@ export class TaskPreferencesService {
       id: preference.id,
       taskId: preference.taskId,
       name: preference.name,
-      startFreq: Number(preference.startFreq),
-      stopFreq: Number(preference.stopFreq),
-      points: preference.points,
-      sweepType: preference.sweepType,
+      ranges: preference.ranges.map((r) => ({
+        id: r.id,
+        order: r.order,
+        startFreq: Number(r.startFreq),
+        stopFreq: Number(r.stopFreq),
+        points: r.points,
+        sweepType: r.sweepType,
+      })),
       createdAt: preference.createdAt?.toISOString() ?? '',
       updatedAt: preference.updatedAt?.toISOString() ?? '',
       analyzerDevice: {

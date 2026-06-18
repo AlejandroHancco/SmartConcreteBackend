@@ -1,12 +1,9 @@
-import { Injectable, NotFoundException, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MeasurementsService } from '../measurements/measurements.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
-import { CreatePreferenceDto } from './dto/create-preference.dto';
 import { MeasureDto } from './dto/measure.dto';
-import * as net from 'net';
-import axios from 'axios';
 
 @Injectable()
 export class TasksService {
@@ -75,69 +72,20 @@ export class TasksService {
       include: {
         analyzerDevice: true,
         muxDevice: true,
+        ranges: {
+          orderBy: { order: 'asc' },
+        },
       },
     });
 
     return {
       ...task,
-      activePreference: activePreference ? {
-        ...activePreference,
-        startFreq: Number(activePreference.startFreq),
-        stopFreq: Number(activePreference.stopFreq),
-      } : null,
+      activePreference: activePreference ? { ...activePreference } : null,
     };
   }
 
-  async getActivePreference(taskId: number) {
-    const preference = await this.prisma.taskPreference.findFirst({
-      where: { taskId },
-      orderBy: { createdAt: 'desc' },
-    });
 
-    if (!preference) {
-      throw new NotFoundException('No active preference found for this task');
-    }
 
-    return {
-      ...preference,
-      startFreq: Number(preference.startFreq),
-      stopFreq: Number(preference.stopFreq),
-    };
-  }
-
-  async createPreference(taskId: number, dto: CreatePreferenceDto, userId: string) {
-    const task = await this.prisma.task.findUnique({ where: { id: taskId } });
-    if (!task) {
-      throw new NotFoundException('Task not found');
-    }
-
-    return this.prisma.taskPreference.upsert({
-      where: { taskId },
-      update: {
-        name: dto.name,
-        analyzerDeviceId: dto.analyzerDeviceId,
-        muxDeviceId: dto.muxDeviceId,
-        startFreq: dto.startFreq,
-        stopFreq: dto.stopFreq,
-        points: dto.points ?? 801,
-        sweepType: dto.sweepType ?? 'LOG',
-      },
-      create: {
-        taskId,
-        name: dto.name,
-        analyzerDeviceId: dto.analyzerDeviceId,
-        muxDeviceId: dto.muxDeviceId,
-        startFreq: dto.startFreq,
-        stopFreq: dto.stopFreq,
-        points: dto.points ?? 801,
-        sweepType: dto.sweepType ?? 'LOG',
-      },
-      include: {
-        analyzerDevice: true,
-        muxDevice: true,
-      },
-    });
-  }
 
   async getMeasurements(taskId: number) {
     const measurements = await this.prisma.measurement.findMany({
@@ -173,6 +121,7 @@ export class TasksService {
       sweepType: dto.sweepType,
       selectedChannels: dto.selectedChannels,
       jobId,
+      rangeId: (dto as any).rangeId,
     });
   }
 }

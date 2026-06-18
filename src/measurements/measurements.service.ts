@@ -108,8 +108,9 @@ export class MeasurementsService {
         stopFreq: number;
         points: number;
         sweepType: 'LOG' | 'LIN';
-        selectedChannels: number[];
-        jobId?: string;
+          selectedChannels: number[];
+          jobId?: string;
+          rangeId?: number;
       },
   ) {
     const jobId = params.jobId || `${taskId}-${Date.now()}`;
@@ -260,18 +261,19 @@ export class MeasurementsService {
       const measurement = await this.prisma.measurement.create({
         data: {
           taskId,
-          takenBy: userId,
+          takenBy: userId,                    // raw FK — fine in UncheckedCreateInput
           presetName: taskPreference.name,
           startFreq: params.startFreq,
           stopFreq: params.stopFreq,
           points: params.points,
           sweepType: params.sweepType,
+          rangeId: params.rangeId ?? null,
           analyzerName: taskPreference.analyzerDevice.name,
           analyzerIp: taskPreference.analyzerDevice.ip ?? '',
           muxName: taskPreference.muxDevice.name,
           muxIp: taskPreference.muxDevice.ip ?? '',
           data: measurementData,
-        },
+        } as any,
       });
 
       this.logger.log(`Measurement saved - ID: ${measurement.id}`);

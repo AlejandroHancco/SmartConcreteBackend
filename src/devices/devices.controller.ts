@@ -12,18 +12,20 @@ import { DevicesService } from './devices.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { TestConnectionDto } from './dto/test-connection.dto';
-import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
+import { CombinedAuthGuard } from '../auth/combined-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { NormalizedUser } from '../auth/interfaces/auth.interface';
 
 // ── GET /devices  &  POST /devices/test-connection ────────────────────────────
-@UseGuards(JwtAuthGuard)
+@UseGuards(CombinedAuthGuard)
 @Controller('devices')
 export class DevicesController {
   constructor(private readonly devicesService: DevicesService) {}
 
   @Get()
-  findAll(@CurrentUser() user: { uuid: string }) {
-    return this.devicesService.findAllForUser(user.uuid);
+  findAll(@CurrentUser() user: NormalizedUser) {
+    return this.devicesService.findAllForUser(user.id);
   }
 
   @Post('test-connection')
@@ -33,7 +35,7 @@ export class DevicesController {
 }
 
 // ── /projects/:projectId/devices/* ────────────────────────────────────────────
-@UseGuards(JwtAuthGuard)
+@UseGuards(CombinedAuthGuard)
 @Controller('projects/:projectId/devices')
 export class ProjectDevicesController {
   constructor(private readonly devicesService: DevicesService) {}

@@ -43,6 +43,7 @@ model Measurement {
   takenAt            DateTime?         @default(now()) @db.Timestamptz(6)
   scheduledJobId    Int?               // null si fue manual
   executionIndex    Int?               // qué repetición fue: 1, 2, 3...
+  rangeId            Int?
 
   // Snapshot del preset usado
   presetName         String?           @db.VarChar(100)
@@ -66,6 +67,7 @@ model Measurement {
   takenByUser        User              @relation(fields: [takenBy], references: [uuid], onUpdate: NoAction)
   task               Task              @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   scheduledJob      ScheduledJob?  @relation(fields: [scheduledJobId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  range              TaskPreferenceRange? @relation(fields: [rangeId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
   measurementChannels MeasurementChannel[]
 
@@ -139,19 +141,33 @@ model TaskPreference {
   name             String    @db.VarChar(100)
   analyzerDeviceId String    @db.Uuid
   muxDeviceId      String    @db.Uuid
-  startFreq        Decimal   @db.Decimal
-  stopFreq         Decimal   @db.Decimal
-  points           Int       @default(801)
-  sweepType        String    @default("LIN") @db.VarChar(20)
   createdAt        DateTime? @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime? @updatedAt @db.Timestamptz(6)
 
-  analyzerDevice Device @relation("analyzerDevice", fields: [analyzerDeviceId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  muxDevice      Device @relation("muxDevice", fields: [muxDeviceId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  task           Task   @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  analyzerDevice   Device                @relation("analyzerDevice", fields: [analyzerDeviceId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  muxDevice        Device                @relation("muxDevice", fields: [muxDeviceId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  task             Task                  @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  ranges           TaskPreferenceRange[]
 
   @@index([taskId, createdAt(sort: Desc)], map: "idx_task_preferences_task_created")
   @@map("task_preferences")
+  @@schema("platform")
+}
+
+model TaskPreferenceRange {
+  id               Int            @id @default(autoincrement())
+  taskPreferenceId Int
+  order            Int
+  startFreq        Decimal        @db.Decimal
+  stopFreq         Decimal        @db.Decimal
+  points           Int            @default(801)
+  sweepType        String         @default("LIN") @db.VarChar(20)
+
+  taskPreference   TaskPreference @relation(fields: [taskPreferenceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  measurements     Measurement[]
+
+  @@unique([taskPreferenceId, order])
+  @@map("task_preference_ranges")
   @@schema("platform")
 }
 
@@ -246,13 +262,62 @@ model User {
   email            String               @unique @db.VarChar(255)
   name             String               @db.VarChar(100)
   lastName         String?              @db.VarChar(100)
-  password         String               @db.VarChar(255)
+  password         String?              @db.VarChar(255)
+  provider         String               @default("password")
+  emailVerified    Boolean              @default(false)
+  rejectionCount   Int                  @default(0)
+  banned           Boolean              @default(false)
   createdAt        DateTime?            @default(now()) @db.Timestamptz(6)
   measurements     Measurement[]
   userProjectRoles UserProjectRole[]
-  scheduledJobs   ScheduledJob[]
-
+  scheduledJobs    ScheduledJob[]
+  teamMembers      TeamMember[]
   @@map("users")
+  @@schema("platform")
+
+
+}
+
+model Team {
+  id        String       @id @default(uuid())
+  name      String
+  code      String       @unique
+  createdAt DateTime     @default(now())
+  members   TeamMember[]
+
+  @@map("teams")
+  @@schema("platform")
+}
+
+model TeamMember {
+  id        String       @id @default(uuid())
+  userId    String       @db.Uuid
+  teamId    String
+  role      TeamRole     @default(MEMBER)
+  status    MemberStatus @default(PENDING)
+  createdAt DateTime     @default(now())
+  user      User         @relation(fields: [userId], references: [uuid])
+  team      Team         @relation(fields: [teamId], references: [id])
+
+  @@unique([userId, teamId])
+  @@map("team_members")
+  @@schema("platform")
+}
+
+enum TeamRole {
+  ADMIN
+  MEMBER
+
+  @@schema("platform")
+}
+
+enum MemberStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PENDING_TEAM
+  BANNED
+
   @@schema("platform")
 }
 

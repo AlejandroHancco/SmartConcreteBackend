@@ -1,51 +1,17 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-  UseGuards,
-} from '@nestjs/common';
-import { UsersService } from './users.service';
-import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
-import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { RequirePermission } from '../common/decorators/require-permission.decorator';
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { NormalizedUser } from '../auth/interfaces/auth.interface';
 
 @Controller('users')
-@UseGuards(JwtAuthGuard)
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
-
-  @Post()
-  @RequirePermission('users:create')
-  create(@Body() createUserDto: CreateUserDto) {
-    return this.usersService.create(createUserDto);
-  }
-
-  @Get()
-  @RequirePermission('users:read')
-  findAll() {
-    return this.usersService.findAll();
-  }
-
-  @Get(':uuid')
-  @RequirePermission('users:read')
-  findOne(@Param('uuid') uuid: string) {
-    return this.usersService.findOne(uuid);
-  }
-
-  @Patch(':uuid')
-  @RequirePermission('users:update')
-  update(@Param('uuid') uuid: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.usersService.update(uuid, updateUserDto);
-  }
-
-  @Delete(':uuid')
-  @RequirePermission('users:delete')
-  remove(@Param('uuid') uuid: string) {
-    return this.usersService.remove(uuid);
+  @Get('me')
+  @UseGuards(SupabaseAuthGuard)
+  getMe(@CurrentUser() user: NormalizedUser) {
+    return {
+      id: user.id,
+      email: user.email,
+      provider: user.provider,
+    };
   }
 }

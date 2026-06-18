@@ -9,19 +9,14 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
-export class CreateTaskPreferenceDto {
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(100)
-  name: string;
-
-  @IsUUID()
-  analyzerDeviceId: string;
-
-  @IsUUID()
-  muxDeviceId: string;
+export class TaskPreferenceRangeDto {
+  @IsInt()
+  @Min(0)
+  order: number;
 
   @IsNumber()
   @Min(1)
@@ -40,4 +35,22 @@ export class CreateTaskPreferenceDto {
   @IsOptional()
   @IsIn(['LOG', 'LIN'])
   sweepType?: string;
+}
+
+export class CreateTaskPreferenceDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  name: string;
+
+  @IsUUID()
+  analyzerDeviceId: string;
+
+  @IsUUID()
+  muxDeviceId: string;
+
+  @IsNotEmpty()
+  @ValidateNested({ each: true })
+  @Type(() => TaskPreferenceRangeDto)
+  ranges: TaskPreferenceRangeDto[];
 }
