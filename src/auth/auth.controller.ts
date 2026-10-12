@@ -1,4 +1,5 @@
-import { Controller, Request, Post, Get, UseGuards, Body, Query, BadRequestException } from '@nestjs/common';
+import { Controller, Request, Post, Get, UseGuards, Body, Query, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CreateUserDto } from '../users/dto/create-user.dto';
@@ -7,15 +8,19 @@ import { CreateUserDto } from '../users/dto/create-user.dto';
 export class AuthController {
   constructor(private authService: AuthService) {}
 
+  // Límite estricto: 5 intentos de login por minuto por IP
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @Post('login')
   async login(@Body() body: { email: string; password: string }) {
     const user = await this.authService.validateUser(body.email, body.password);
     if (user) {
       return this.authService.login(user);
     }
-    throw new Error('Invalid credentials');
+    throw new UnauthorizedException('Credenciales incorrectas');
   }
 
+  // Límite estricto: 5 registros por minuto por IP
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @Post('register')
   async register(@Body() createUserDto: CreateUserDto) {
     return this.authService.register(

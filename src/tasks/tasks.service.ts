@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { MeasurementsService } from '../measurements/measurements.service';
+import { TeamScopeService } from '../common/team-scope.service';
+import { MeasurementSchedulingService } from '../scheduler/scheduling.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { MeasureDto } from './dto/measure.dto';
@@ -9,38 +10,50 @@ import { MeasureDto } from './dto/measure.dto';
 export class TasksService {
   constructor(
     private prisma: PrismaService,
-    private measurementsService: MeasurementsService,
+    private teamScope: TeamScopeService,
+    private schedulingService: MeasurementSchedulingService,
   ) {}
 
-  async create(createTaskDto: CreateTaskDto) {
+  async create(createTaskDto: CreateTaskDto, userId: string) {
+    await this.teamScope.assertProjectInTeam(userId, createTaskDto.projectId);
     return this.prisma.task.create({
       data: createTaskDto,
     });
   }
 
-  async findAll() {
-    return this.prisma.task.findMany();
+  async findAll(userId: string) {
+    // Solo tasks de proyectos del equipo del usuario
+    const teamWhere = await this.teamScope.projectWhereForUser(userId);
+    return this.prisma.task.findMany({
+      where: { project: teamWhere },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, userId: string) {
+    await this.teamScope.assertTaskInTeam(userId, id);
     return this.prisma.task.findUnique({
       where: { id },
     });
   }
 
-  async update(id: number, updateTaskDto: UpdateTaskDto) {
+  async update(id: number, updateTaskDto: UpdateTaskDto, userId: string) {
+    await this.teamScope.assertTaskInTeam(userId, id);
     return this.prisma.task.update({
       where: { id },
       data: updateTaskDto,
     });
   }
 
-  async remove(id: number) {
+  async remove(id: number, userId: string) {
+    await this.teamScope.assertTaskInTeam(userId, id);
     return this.prisma.task.delete({
       where: { id },
     });
   }
-  async findByProject(projectId: string, page: number = 1, limit: number = 10) {
+
+  async findByProject(projectId: string, userId: string, page: number = 1, limit: number = 10) {
+    await this.teamScope.assertProjectInTeam(userId, projectId);
     const skip = (page - 1) * limit;
 
     const [items, total] = await this.prisma.$transaction([
@@ -58,7 +71,8 @@ export class TasksService {
     return { items, total, page, limit };
   }
 
-  async findOneWithPreference(id: number) {
+  async findOneWithPreference(id: number, userId: string) {
+    await this.teamScope.assertTaskInTeam(userId, id);
     const task = await this.prisma.task.findUnique({
       where: { id },
     });
@@ -84,10 +98,8 @@ export class TasksService {
     };
   }
 
-
-
-
-  async getMeasurements(taskId: number) {
+  async getMeasurements(taskId: number, userId: string) {
+    await this.teamScope.assertTaskInTeam(userId, taskId);
     const measurements = await this.prisma.measurement.findMany({
       where: { taskId },
       orderBy: { takenAt: 'desc' },
@@ -110,18 +122,14 @@ export class TasksService {
   }
 
   async measure(taskId: number, dto: MeasureDto, userId: string) {
-    // Generar jobId único para tracking
+    await this.teamScope.assertTaskInTeam(userId, taskId);
     const jobId = `${taskId}-${Date.now()}`;
-
-    // Delegar a measurements.service que maneja WebSocket
-    return this.measurementsService.measureTask(taskId, userId, {
-      startFreq: dto.startFreq,
-      stopFreq: dto.stopFreq,
-      points: dto.points,
-      sweepType: dto.sweepType,
+    // Control de admisión: encola si hay capacidad, 409 si la cola está
+    // llena o chocaría con una medición programada (mismos dispositivos)
+    return this.schedulingService.requestMeasurement(taskId, userId, {
+      ranges: dto.ranges,
       selectedChannels: dto.selectedChannels,
       jobId,
-      rangeId: (dto as any).rangeId,
     });
   }
 }

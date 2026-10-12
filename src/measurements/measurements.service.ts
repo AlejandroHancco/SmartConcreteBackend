@@ -1,10 +1,19 @@
 import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { TeamScopeService } from '../common/team-scope.service';
 import { MeasurementsGateway } from './measurements.gateway';
+import { KronosGateway } from '../gateway/kronos.gateway';
 import { CreateMeasurementDto } from './dto/create-measurement.dto';
 import { UpdateMeasurementDto } from './dto/update-measurement.dto';
 import * as net from 'net';
 import axios from 'axios';
+
+export interface MeasurementRange {
+  startFreq: number;
+  stopFreq: number;
+  points: number;
+  sweepType: 'LOG' | 'LIN';
+}
 
 @Injectable()
 export class MeasurementsService {
@@ -12,27 +21,57 @@ export class MeasurementsService {
 
   constructor(
       private prisma: PrismaService,
+      private teamScope: TeamScopeService,
       private measurementsGateway: MeasurementsGateway,
+      private kronosGateway: KronosGateway,
   ) {}
 
-  async create(createMeasurementDto: CreateMeasurementDto) {
+  async getLatest(userId: string) {
+    const teamWhere = await this.teamScope.projectWhereForUser(userId);
+
+    return this.prisma.measurement.findFirst({
+      where: { task: { project: teamWhere } },
+      orderBy: { takenAt: 'desc' },
+      include: {
+        task: {
+          select: {
+            id: true,
+            name: true,
+            project: { select: { uuid: true, name: true } },
+          },
+        },
+        measurementChannels: {
+          select: { channelNumber: true, channelAlias: true },
+        },
+      },
+    });
+  }
+
+  async create(createMeasurementDto: CreateMeasurementDto, userId: string) {
+    await this.teamScope.assertTaskInTeam(userId, createMeasurementDto.taskId);
     return this.prisma.measurement.create({
       data: createMeasurementDto,
     });
   }
 
-  async findAll() {
-    return this.prisma.measurement.findMany();
+  async findAll(userId: string) {
+    const teamWhere = await this.teamScope.projectWhereForUser(userId);
+    return this.prisma.measurement.findMany({
+      where: { task: { project: teamWhere } },
+      orderBy: { takenAt: 'desc' },
+    });
   }
 
-  async findByTask(taskId: number) {
+  async findByTask(taskId: number, userId: string) {
+    await this.teamScope.assertTaskInTeam(userId, taskId);
     return this.prisma.measurement.findMany({
       where: { taskId },
       orderBy: { takenAt: 'desc' },
     });
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, userId: string) {
+    await this.teamScope.assertMeasurementInTeam(userId, id);
     const measurement = await this.prisma.measurement.findUnique({
       where: { id },
     });
@@ -48,14 +87,16 @@ export class MeasurementsService {
     };
   }
 
-  async update(id: number, updateMeasurementDto: UpdateMeasurementDto) {
+  async update(id: number, updateMeasurementDto: UpdateMeasurementDto, userId: string) {
+    await this.teamScope.assertMeasurementInTeam(userId, id);
     return this.prisma.measurement.update({
       where: { id },
       data: updateMeasurementDto,
     });
   }
 
-  async remove(id: number) {
+  async remove(id: number, userId: string) {
+    await this.teamScope.assertMeasurementInTeam(userId, id);
     return this.prisma.measurement.delete({
       where: { id },
     });
@@ -68,6 +109,7 @@ export class MeasurementsService {
   async updateMeasurementChannelMetadata(
       measurementId: number,
       channelNumber: number,
+      userId: string,
       updateData: {
         concreteMix?: number;
         hasEmulsifier?: boolean;
@@ -77,6 +119,7 @@ export class MeasurementsService {
         humidity?: number;
       },
   ) {
+    await this.teamScope.assertMeasurementInTeam(userId, measurementId);
     const measurementChannel = await this.prisma.measurementChannel.findUnique({
       where: {
         measurementId_channelNumber: { measurementId, channelNumber },
@@ -104,24 +147,28 @@ export class MeasurementsService {
       taskId: number,
       userId: string,
       params: {
-        startFreq: number;
-        stopFreq: number;
-        points: number;
-        sweepType: 'LOG' | 'LIN';
-          selectedChannels: number[];
-          jobId?: string;
-          rangeId?: number;
+        ranges: MeasurementRange[];
+        selectedChannels: number[];
+        jobId?: string;
+        scheduledJobId?: number;
+        executionIndex?: number;
       },
   ) {
     const jobId = params.jobId || `${taskId}-${Date.now()}`;
 
     try {
-      this.logger.log(`Starting measurement - Task: ${taskId}, JobId: ${jobId}`);
+      this.logger.log(`Starting measurement - Task: ${taskId}, JobId: ${jobId}, Ranges: ${params.ranges.length}`);
 
-      // Validar canales seleccionados
       if (!params.selectedChannels || params.selectedChannels.length === 0) {
         throw new HttpException(
             'No channels selected for this task',
+            HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      if (!params.ranges || params.ranges.length === 0) {
+        throw new HttpException(
+            'No frequency ranges specified',
             HttpStatus.BAD_REQUEST,
         );
       }
@@ -152,7 +199,7 @@ export class MeasurementsService {
       );
 
       this.logger.log(
-          `Measuring ${uniqueChannels.length} channels sequentially: ${uniqueChannels.join(', ')}`,
+          `Measuring ${uniqueChannels.length} channels × ${params.ranges.length} ranges sequentially`,
       );
 
       // 2. Obtener aliases configurados para los canales de esta tarea
@@ -167,39 +214,45 @@ export class MeasurementsService {
       // 3. Inicializar datos
       const allData = new Map<number, { g: number[]; b: number[] }>();
 
-      // 4. FIX: Medir cada canal de forma SECUENCIAL
+      // 4. Medir cada canal de forma SECUENCIAL.
       //    El MUX solo puede tener un canal activo a la vez —
       //    Promise.all corrupta los datos porque cambia el canal
       //    antes de que el analyzer termine de medir el anterior.
+      //    Por cada canal se recorren todos los rangos secuencialmente
+      //    sin cambiar el MUX entre rangos.
       const results: { channel: number; channelData: Array<[number, number, number]> | null }[] = [];
 
       for (let index = 0; index < uniqueChannels.length; index++) {
         const channel = uniqueChannels[index];
 
         try {
-          // 4a. Cambiar canal en MUX y esperar confirmación
+          // 4a. Cambiar canal en MUX una sola vez por canal
           await this.activateMuxChannel(
               taskPreference.muxDevice.ip ?? '',
               channel,
               3,
           );
 
-          // 4b. Recién ahora medir — el MUX ya está estable en el canal correcto
-          const channelData = await this.measureChannel(
-              taskPreference.analyzerDevice.ip ?? '',
-              params.startFreq,
-              params.stopFreq,
-              params.points,
-              params.sweepType,
-          );
+          // 4b. Medir todos los rangos para este canal
+          const channelData: Array<[number, number, number]> = [];
+          for (const range of params.ranges) {
+            const rangeData = await this.measureChannel(
+                taskPreference.analyzerDevice.ip ?? '',
+                range.startFreq,
+                range.stopFreq,
+                range.points,
+                range.sweepType,
+            );
+            channelData.push(...rangeData);
+          }
 
           this.logger.log(
-              `Channel ${channel} measured - ${channelData.length} points`,
+              `Channel ${channel} measured - ${channelData.length} points across ${params.ranges.length} ranges`,
           );
 
           results.push({ channel, channelData });
 
-          // 4c. Emitir progreso DESPUÉS de medir (no antes) para reflejar estado real
+          // 4c. Emitir progreso DESPUÉS de medir para reflejar estado real
           const progress = Math.round(((index + 1) / uniqueChannels.length) * 100);
           this.measurementsGateway.emitMeasurementProgress(
               userId,
@@ -216,7 +269,6 @@ export class MeasurementsService {
           );
           results.push({ channel, channelData: null });
 
-          // Emitir progreso aunque falle para que el frontend no se quede colgado
           const progress = Math.round(((index + 1) / uniqueChannels.length) * 100);
           this.measurementsGateway.emitMeasurementProgress(
               userId,
@@ -257,17 +309,22 @@ export class MeasurementsService {
 
       this.logger.log(`Total points collected: ${measurementData.length}`);
 
+      const firstRange = params.ranges[0];
+      const lastRange = params.ranges[params.ranges.length - 1];
+      const totalPoints = params.ranges.reduce((sum, r) => sum + r.points, 0);
+
       // 7. Guardar medición en DB
       const measurement = await this.prisma.measurement.create({
         data: {
           taskId,
-          takenBy: userId,                    // raw FK — fine in UncheckedCreateInput
+          takenBy: userId,
+          scheduledJobId: params.scheduledJobId ?? null,
+          executionIndex: params.executionIndex ?? null,
           presetName: taskPreference.name,
-          startFreq: params.startFreq,
-          stopFreq: params.stopFreq,
-          points: params.points,
-          sweepType: params.sweepType,
-          rangeId: params.rangeId ?? null,
+          startFreq: firstRange.startFreq,
+          stopFreq: lastRange.stopFreq,
+          points: totalPoints,
+          sweepType: firstRange.sweepType,
           analyzerName: taskPreference.analyzerDevice.name,
           analyzerIp: taskPreference.analyzerDevice.ip ?? '',
           muxName: taskPreference.muxDevice.name,
@@ -293,7 +350,7 @@ export class MeasurementsService {
           `MeasurementChannels created for measurement ${measurement.id}`,
       );
 
-      // 9. Emitir completado
+      // 9. Emitir completado (sala personal del usuario + sala de la tarea)
       this.measurementsGateway.emitMeasurementCompleted(
           userId,
           jobId,
@@ -302,6 +359,13 @@ export class MeasurementsService {
           measurementData.length,
           measurementData,
       );
+
+      this.kronosGateway.emitMeasurementComplete(taskId, {
+        jobId,
+        measurementId: measurement.id,
+        takenAt: measurement.takenAt || new Date(),
+        totalPoints: measurementData.length,
+      });
 
       return {
         measurementId: measurement.id,

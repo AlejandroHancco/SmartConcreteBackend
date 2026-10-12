@@ -5,90 +5,70 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { TeamScopeService } from '../common/team-scope.service';
+import { PermissionsService } from '../permissions/permissions.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { TeamRole, MemberStatus } from '@prisma/client';
 import { NormalizedUser } from '../auth/interfaces/auth.interface';
 
+const ROLE_TEAM_ADMIN_ID = 2;   // Administrador de Equipo
+const ROLE_OPERATOR_ID   = 4;   // Operario (default para miembros degradados)
+const MAX_REJECTIONS     = 3;
+
 @Injectable()
 export class TeamsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private teamScope: TeamScopeService,
+    private permissionsService: PermissionsService,
+    private notificationsService: NotificationsService,
+  ) {}
 
-  /**
-   * POST /teams/join - Unirse a un equipo con código
-   */
   async joinTeam(code: string, user: NormalizedUser) {
-    // Verificar si el usuario está baneado
-    const dbUser = await this.prisma.user.findUnique({
-      where: { uuid: user.id },
+    const dbUser = await this.prisma.user.findUnique({ where: { uuid: user.id } });
+    if (dbUser?.banned) throw new ForbiddenException('Tu cuenta ha sido suspendida');
+
+    const team = await this.prisma.team.findUnique({ where: { code } });
+    if (!team) throw new BadRequestException('Código inválido');
+
+    const existing = await this.prisma.teamMember.findUnique({
+      where: { userId_teamId: { userId: user.id, teamId: team.id } },
     });
 
-    if (dbUser?.banned) {
-      throw new ForbiddenException('Tu cuenta ha sido suspendida');
-    }
+    if (existing?.status === 'APPROVED') throw new BadRequestException('Ya eres miembro');
 
-    // Buscar el equipo por código
-    const team = await this.prisma.team.findUnique({
-      where: { code },
-    });
-
-    if (!team) {
-      throw new BadRequestException('Código inválido');
-    }
-
-    // Verificar si el usuario ya es miembro aprobado
-    const existingMember = await this.prisma.teamMember.findUnique({
-      where: {
-        userId_teamId: {
-          userId: user.id,
-          teamId: team.id,
-        },
-      },
-    });
-
-    if (existingMember && existingMember.status === 'APPROVED') {
-      throw new BadRequestException('Ya eres miembro');
-    }
-
-    // Si existe y está rechazado o pendiente, actualizar a pendiente
-    if (existingMember) {
+    if (existing) {
       await this.prisma.teamMember.update({
-        where: {
-          id: existingMember.id,
-        },
-        data: {
-          status: 'PENDING',
-        },
+        where: { id: existing.id },
+        data: { status: 'PENDING' },
       });
     } else {
-      // Crear nuevo TeamMember con status PENDING
       await this.prisma.teamMember.create({
-        data: {
-          userId: user.id,
-          teamId: team.id,
-          status: 'PENDING',
-          role: 'MEMBER',
-        },
+        data: { userId: user.id, teamId: team.id, status: 'PENDING', role: 'MEMBER' },
       });
     }
 
-    return {
-      message: 'Solicitud enviada',
-      status: 'PENDING',
-    };
+    // Notificar a todos los admins del equipo sobre la nueva solicitud
+    const admins = await this.prisma.teamMember.findMany({
+      where: { teamId: team.id, role: 'ADMIN', status: 'APPROVED' },
+      select: { userId: true },
+    });
+    const applicantName = dbUser
+      ? `${dbUser.name}${dbUser.lastName ? ' ' + dbUser.lastName : ''}`
+      : user.email;
+    await Promise.all(
+      admins.map((admin) =>
+        this.notificationsService.notifyAdminNewRequest(admin.userId, applicantName, team.name),
+      ),
+    );
+
+    return { message: 'Solicitud enviada', status: 'PENDING' };
   }
 
-  /**
-   * GET /teams/my-status - Obtener estado del usuario en su equipo
-   */
   async getMyStatus(user: NormalizedUser) {
-    const dbUser = await this.prisma.user.findUnique({
-      where: { uuid: user.id },
-    });
+    const dbUser = await this.prisma.user.findUnique({ where: { uuid: user.id } });
+    if (!dbUser) throw new NotFoundException('Usuario no encontrado');
 
-    if (!dbUser) {
-      throw new NotFoundException('Usuario no encontrado');
-    }
-
-    // Buscar la membresía más reciente del usuario (por createdAt desc)
     const teamMember = await this.prisma.teamMember.findFirst({
       where: { userId: user.id },
       include: { team: true },
@@ -105,114 +85,171 @@ export class TeamsService {
     };
   }
 
-  /**
-   * GET /teams/requests - Obtener solicitudes pendientes (solo ADMIN)
-   */
   async getPendingRequests(user: NormalizedUser) {
-    // Verificar que sea ADMIN en su equipo
     const adminMember = await this.prisma.teamMember.findFirst({
-      where: {
-        userId: user.id,
-        role: 'ADMIN',
-        status: 'APPROVED',
-      },
-      include: { team: true },
+      where: { userId: user.id, role: 'ADMIN', status: 'APPROVED' },
     });
+    if (!adminMember) throw new ForbiddenException('No tienes permisos para ver solicitudes');
 
-    if (!adminMember) {
-      throw new ForbiddenException('No tienes permisos para ver solicitudes');
-    }
-
-    // Obtener las solicitudes pendientes del equipo
     const requests = await this.prisma.teamMember.findMany({
-      where: {
-        teamId: adminMember.teamId,
-        status: 'PENDING',
-      },
+      where: { teamId: adminMember.teamId, status: 'PENDING' },
       include: {
-        user: {
-          select: {
-            uuid: true,
-            name: true,
-            email: true,
-          },
-        },
+        user: { select: { uuid: true, name: true, email: true } },
       },
       orderBy: { createdAt: 'asc' },
     });
 
-    return requests.map((member) => ({
-      userId: member.user.uuid,
-      userName: member.user.name,
-      userEmail: member.user.email,
-      status: member.status,
-      createdAt: member.createdAt,
+    return requests.map((m) => ({
+      userId: m.user.uuid,
+      userName: m.user.name,
+      userEmail: m.user.email,
+      status: m.status,
+      createdAt: m.createdAt,
     }));
   }
 
-  async getTeam(teamId: string) {
+  async getTeam(teamId: string, callerId: string) {
+    await this.teamScope.assertTeamAccess(callerId, teamId);
     const team = await this.prisma.team.findUnique({ where: { id: teamId } });
-
-    if (!team) {
-      throw new NotFoundException(`Team ${teamId} not found`);
-    }
-
-     return team;
+    if (!team) throw new NotFoundException(`Team ${teamId} not found`);
+    return team;
   }
 
-
-  async getMembers(teamId: string) {
-    return this.prisma.teamMember.findMany({
+  async getMembers(teamId: string, callerId: string) {
+    await this.teamScope.assertTeamAccess(callerId, teamId);
+    const members = await this.prisma.teamMember.findMany({
       where: { teamId },
-      include: { user: { select: { uuid: true, name: true, email: true } } },
+      include: {
+        user: { select: { uuid: true, name: true, lastName: true, email: true } },
+      },
       orderBy: { createdAt: 'asc' },
     });
+
+    return members.map((m) => ({
+      userId: m.user.uuid,
+      name: m.user.name,
+      lastName: m.user.lastName,
+      email: m.user.email,
+      role: m.role,
+      status: m.status,
+    }));
   }
 
-  async updateMemberRole(teamId: string, userId: string, role: TeamRole) {
-    const member = await this.prisma.teamMember.findFirst({ where: { teamId, userId } });
-    if (!member) throw new NotFoundException('Member not found');
-    return this.prisma.teamMember.update({ where: { id: member.id }, data: { role } });
+  async updateMemberRole(
+    teamId: string,
+    targetUserId: string,
+    newRole: TeamRole,
+    caller: NormalizedUser,
+  ) {
+    await this.teamScope.assertTeamAccess(caller.id, teamId);
+
+    // 1. Verificar que el caller sea ADMIN del equipo
+    const callerMember = await this.prisma.teamMember.findFirst({
+      where: { teamId, userId: caller.id, role: 'ADMIN', status: 'APPROVED' },
+    });
+    if (!callerMember) {
+      throw new ForbiddenException('Solo un ADMIN del equipo puede cambiar roles');
+    }
+
+    // 2. No permitir cambiar el propio rol
+    if (targetUserId === caller.id) {
+      throw new BadRequestException('No puedes cambiar tu propio rol');
+    }
+
+    // 3. Verificar que el target sea miembro del equipo
+    const targetMember = await this.prisma.teamMember.findFirst({
+      where: { teamId, userId: targetUserId },
+    });
+    if (!targetMember) throw new NotFoundException('Miembro no encontrado en el equipo');
+
+    // 4. Actualizar TeamMember.role
+    await this.prisma.teamMember.update({
+      where: { id: targetMember.id },
+      data: { role: newRole },
+    });
+
+    // 5. Propagar el cambio a UserProjectRole en todos los proyectos del equipo
+    const projectRoleId = newRole === 'ADMIN' ? ROLE_TEAM_ADMIN_ID : ROLE_OPERATOR_ID;
+    await this.propagateRoleToProjects(teamId, targetUserId, projectRoleId);
+
+    // 6. Invalidar caché de permisos del usuario afectado inmediatamente
+    await this.permissionsService.invalidateUserCache(targetUserId);
+
+    return {
+      message: `Rol actualizado a ${newRole}`,
+      userId: targetUserId,
+      newTeamRole: newRole,
+      newProjectRoleId: projectRoleId,
+    };
   }
 
-  async removeMember(teamId: string, userId: string) {
+  private async propagateRoleToProjects(
+    teamId: string,
+    userId: string,
+    roleId: number,
+  ) {
+    const teamMemberIds = await this.prisma.teamMember.findMany({
+      where: { teamId, status: MemberStatus.APPROVED },
+      select: { userId: true },
+    });
+    const memberUserIds = teamMemberIds.map((m) => m.userId);
+
+    const teamProjects = await this.prisma.project.findMany({
+      where: { userProjectRoles: { some: { userId: { in: memberUserIds } } } },
+      select: { uuid: true },
+    });
+
+    await Promise.all(
+      teamProjects.map((p) =>
+        this.prisma.userProjectRole.upsert({
+          where: { userId_projectId: { userId, projectId: p.uuid } },
+          update: { roleId },
+          create: { userId, projectId: p.uuid, roleId },
+        }),
+      ),
+    );
+  }
+
+  async removeMember(teamId: string, userId: string, caller: NormalizedUser) {
+    // Solo un ADMIN del mismo equipo puede remover miembros
+    const callerAdmin = await this.prisma.teamMember.findFirst({
+      where: { teamId, userId: caller.id, role: 'ADMIN', status: 'APPROVED' },
+    });
+    if (!callerAdmin) {
+      throw new ForbiddenException('Solo un ADMIN del equipo puede remover miembros');
+    }
+    if (userId === caller.id) {
+      throw new BadRequestException('No puedes removerte a ti mismo del equipo');
+    }
+
     const member = await this.prisma.teamMember.findFirst({ where: { teamId, userId } });
     if (!member) throw new NotFoundException('Member not found');
-    return this.prisma.teamMember.delete({ where: { id: member.id } });
+
+    const removed = await this.prisma.teamMember.delete({ where: { id: member.id } });
+    await this.permissionsService.invalidateUserCache(userId);
+    return removed;
   }
 
   async approveMember(teamId: string, userId: string, adminUser: NormalizedUser) {
-    // Verificar que el admin sea ADMIN del equipo
     const adminMember = await this.prisma.teamMember.findFirst({
-      where: {
-        userId: adminUser.id,
-        role: 'ADMIN',
-        status: 'APPROVED',
-      },
+      where: { userId: adminUser.id, role: 'ADMIN', status: 'APPROVED' },
     });
+    if (!adminMember) throw new ForbiddenException('No tienes permisos para aprobar solicitudes');
 
-    if (!adminMember) {
-      throw new ForbiddenException('No tienes permisos para aprobar solicitudes');
-    }
-
-    // Buscar el miembro a aprobar en el mismo equipo
     const memberToApprove = await this.prisma.teamMember.findFirst({
-      where: {
-        userId,
-        teamId: adminMember.teamId,
-      },
+      where: { userId, teamId: adminMember.teamId },
     });
+    if (!memberToApprove) throw new NotFoundException('Solicitud no encontrada');
 
-    if (!memberToApprove) {
-      throw new NotFoundException('Solicitud no encontrada');
-    }
-
-    // Actualizar status a APPROVED
     const updated = await this.prisma.teamMember.update({
       where: { id: memberToApprove.id },
       data: { status: 'APPROVED' },
       include: { user: true, team: true },
     });
+
+    // Invalidar caché de permisos + notificar al usuario aprobado
+    await this.permissionsService.invalidateUserCache(userId);
+    await this.notificationsService.notifyMemberApproved(userId, updated.team.name);
 
     return {
       message: 'Solicitud aprobada',
@@ -225,54 +262,40 @@ export class TeamsService {
   }
 
   async rejectMember(teamId: string, userId: string, adminUser: NormalizedUser) {
-    // Verificar que el admin sea ADMIN del equipo
     const adminMember = await this.prisma.teamMember.findFirst({
-      where: {
-        userId: adminUser.id,
-        role: 'ADMIN',
-        status: 'APPROVED',
-      },
+      where: { userId: adminUser.id, role: 'ADMIN', status: 'APPROVED' },
     });
+    if (!adminMember) throw new ForbiddenException('No tienes permisos para rechazar solicitudes');
 
-    if (!adminMember) {
-      throw new ForbiddenException('No tienes permisos para rechazar solicitudes');
-    }
-
-    // Buscar el miembro a rechazar en el mismo equipo
     const memberToReject = await this.prisma.teamMember.findFirst({
-      where: {
-        userId,
-        teamId: adminMember.teamId,
-      },
+      where: { userId, teamId: adminMember.teamId },
+      include: { team: true },
     });
+    if (!memberToReject) throw new NotFoundException('Solicitud no encontrada');
 
-    if (!memberToReject) {
-      throw new NotFoundException('Solicitud no encontrada');
-    }
-
-    // Incrementar rejectionCount
     const updatedUser = await this.prisma.user.update({
       where: { uuid: userId },
       data: { rejectionCount: { increment: 1 } },
     });
 
-    const shouldBan = updatedUser.rejectionCount >= 3;
+    const shouldBan = updatedUser.rejectionCount >= MAX_REJECTIONS;
+
+    await this.prisma.teamMember.update({
+      where: { id: memberToReject.id },
+      data: { status: shouldBan ? 'BANNED' : 'REJECTED' },
+    });
 
     if (shouldBan) {
-      await this.prisma.user.update({
-        where: { uuid: userId },
-        data: { banned: true },
-      });
-      await this.prisma.teamMember.update({
-        where: { id: memberToReject.id },
-        data: { status: 'BANNED' },
-      });
-    } else {
-      await this.prisma.teamMember.update({
-        where: { id: memberToReject.id },
-        data: { status: 'REJECTED' },
-      });
+      await this.prisma.user.update({ where: { uuid: userId }, data: { banned: true } });
     }
+
+    // Notificar al usuario rechazado con los intentos restantes
+    const attemptsLeft = Math.max(0, MAX_REJECTIONS - updatedUser.rejectionCount);
+    await this.notificationsService.notifyMemberRejected(
+      userId,
+      memberToReject.team.name,
+      attemptsLeft,
+    );
 
     return {
       message: 'Solicitud rechazada',
@@ -281,8 +304,12 @@ export class TeamsService {
     };
   }
 
-  async getTeamProjects(teamId: string) {
-    const members = await this.prisma.teamMember.findMany({ where: { teamId, status: MemberStatus.APPROVED }, select: { userId: true } });
+  async getTeamProjects(teamId: string, callerId: string) {
+    await this.teamScope.assertTeamAccess(callerId, teamId);
+    const members = await this.prisma.teamMember.findMany({
+      where: { teamId, status: MemberStatus.APPROVED },
+      select: { userId: true },
+    });
     const userIds = members.map((m) => m.userId);
     if (userIds.length === 0) return [];
 
@@ -292,8 +319,12 @@ export class TeamsService {
     });
   }
 
-  async getTeamActivity(teamId: string) {
-    const members = await this.prisma.teamMember.findMany({ where: { teamId, status: MemberStatus.APPROVED }, select: { userId: true } });
+  async getTeamActivity(teamId: string, callerId: string) {
+    await this.teamScope.assertTeamAccess(callerId, teamId);
+    const members = await this.prisma.teamMember.findMany({
+      where: { teamId, status: MemberStatus.APPROVED },
+      select: { userId: true },
+    });
     const userIds = members.map((m) => m.userId);
     if (userIds.length === 0) return [];
 
@@ -321,12 +352,7 @@ export class TeamsService {
       where: { userId, status: MemberStatus.APPROVED },
       include: { team: true },
     });
-
-    if (!member) {
-      throw new NotFoundException('No team found for this user');
-    }
-
+    if (!member) throw new NotFoundException('No team found for this user');
     return member.team;
   }
 }
-

@@ -1,35 +1,36 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { TeamScopeService } from '../common/team-scope.service';
 import { CreateScheduledJobDto } from './dto/create-scheduled-job.dto';
 
 @Injectable()
 export class ScheduledJobsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private teamScope: TeamScopeService,
+  ) {}
 
   async create(createScheduledJobDto: CreateScheduledJobDto, userId: string) {
     const { taskId, ...data } = createScheduledJobDto;
 
-    // Verificar que la tarea existe
-    const task = await this.prisma.task.findUnique({
-      where: { id: taskId },
-    });
-
-    if (!task) {
-      throw new NotFoundException(`Task with ID ${taskId} not found`);
-    }
+    // Verificar que la tarea existe Y pertenece al equipo del usuario
+    await this.teamScope.assertTaskInTeam(userId, taskId);
 
     return this.prisma.scheduledJob.create({
       data: {
         ...data,
-        taskId: taskId,
+        taskId,
         createdBy: userId,
         status: 'pending',
       },
     });
   }
 
-  async findAll() {
+  async findAll(userId: string) {
+    const teamWhere = await this.teamScope.projectWhereForUser(userId);
+
     return this.prisma.scheduledJob.findMany({
+      where: { task: { project: teamWhere } },
       include: {
         task: true,
         createdByUser: {
@@ -44,7 +45,9 @@ export class ScheduledJobsService {
     });
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, userId: string) {
+    await this.teamScope.assertScheduledJobInTeam(userId, id);
+
     const job = await this.prisma.scheduledJob.findUnique({
       where: { id },
       include: {
@@ -64,5 +67,20 @@ export class ScheduledJobsService {
     }
 
     return job;
+  }
+
+  async remove(id: number, userId: string) {
+    await this.teamScope.assertScheduledJobInTeam(userId, id);
+
+    const job = await this.prisma.scheduledJob.findUnique({ where: { id } });
+    if (!job) {
+      throw new NotFoundException(`Scheduled job with ID ${id} not found`);
+    }
+
+    if (job.status === 'running') {
+      throw new BadRequestException('No se puede eliminar un job en ejecución');
+    }
+
+    return this.prisma.scheduledJob.delete({ where: { id } });
   }
 }

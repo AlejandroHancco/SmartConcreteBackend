@@ -9,7 +9,9 @@ export class RlsMiddleware implements NestMiddleware {
   async use(req: Request, res: Response, next: NextFunction) {
     const userId = (req as any).user?.uuid; // Asumiendo que el JWT pone el user en req.user
     if (userId) {
-      await this.prisma.$executeRawUnsafe(`SET app.current_user_id = '${userId}'`);
+      // Parametrizado con set_config para evitar SQL injection
+      await this.prisma
+        .$executeRaw`SELECT set_config('app.current_user_id', ${userId}, false)`;
     }
     next();
   }

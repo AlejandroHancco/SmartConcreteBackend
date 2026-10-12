@@ -272,6 +272,7 @@ model User {
   userProjectRoles UserProjectRole[]
   scheduledJobs    ScheduledJob[]
   teamMembers      TeamMember[]
+  notifications    Notification[]
   @@map("users")
   @@schema("platform")
 
@@ -321,6 +322,22 @@ enum MemberStatus {
   @@schema("platform")
 }
 
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    String   @db.Uuid
+  title     String   @db.VarChar(150)
+  message   String   @db.VarChar(500)
+  type      String   @db.VarChar(50) // TEAM_APPROVED | TEAM_REJECTED | TEAM_REQUEST | ...
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [uuid], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)], map: "idx_notifications_user_created")
+  @@map("notifications")
+  @@schema("platform")
+}
+
 enum ScheduledJobStatus {
   pending
   running
@@ -338,7 +355,8 @@ model ScheduledJob {
 
   startAt          DateTime           @db.Timestamptz(6)
   intervalMinutes  Int?               // null = one-shot
-  repeatCount      Int                @default(1)
+  repeatCount      Int                @default(1)   // ejecuciones restantes (incluyendo esta)
+  executionIndex   Int                @default(1)   // posición en la cadena de repeticiones: 1, 2, 3...
 
   status           ScheduledJobStatus @default(pending)
   createdAt        DateTime?          @default(now()) @db.Timestamptz(6)

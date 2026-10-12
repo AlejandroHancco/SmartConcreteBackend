@@ -1,5 +1,6 @@
 import { Injectable, HttpException, HttpStatus, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { TeamScopeService } from '../common/team-scope.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { TestConnectionDto } from './dto/test-connection.dto';
@@ -8,25 +9,22 @@ import axios from 'axios';
 
 @Injectable()
 export class DevicesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+      private prisma: PrismaService,
+      private teamScope: TeamScopeService,
+  ) {}
 
-  // ── Global: todos los dispositivos de proyectos donde el usuario tiene rol ──
+  // ── Global: todos los dispositivos de proyectos del equipo del usuario ──────
 
   async findAllForUser(userId: string) {
-    // Setear contexto RLS antes de la query para que Supabase
-    // permita leer user_project_roles del schema platform
-    await this.prisma.$executeRawUnsafe(
-        `SET app.current_user_id = '${userId}'`,
-    );
+    // Setear contexto RLS de forma parametrizada (sin interpolación directa)
+    await this.prisma
+        .$executeRaw`SELECT set_config('app.current_user_id', ${userId}, false)`;
+
+    const teamWhere = await this.teamScope.projectWhereForUser(userId);
 
     return this.prisma.device.findMany({
-      where: {
-        project: {
-          userProjectRoles: {
-            some: { userId },
-          },
-        },
-      },
+      where: { project: teamWhere },
       include: {
         project: {
           select: { uuid: true, name: true },
@@ -36,16 +34,18 @@ export class DevicesService {
     });
   }
 
-  // ── Scoped por proyecto ────────────────────────────────────────────────────
+  // ── Scoped por proyecto (siempre verificando equipo del caller) ────────────
 
-  async findByProject(projectId: string) {
+  async findByProject(projectId: string, userId: string) {
+    await this.teamScope.assertProjectInTeam(userId, projectId);
     return this.prisma.device.findMany({
       where: { projectId },
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  async findOneInProject(projectId: string, deviceId: string) {
+  async findOneInProject(projectId: string, deviceId: string, userId: string) {
+    await this.teamScope.assertProjectInTeam(userId, projectId);
     const device = await this.prisma.device.findUnique({
       where: { id: deviceId },
     });
@@ -57,7 +57,8 @@ export class DevicesService {
     return device;
   }
 
-  async createInProject(projectId: string, createDeviceDto: CreateDeviceDto) {
+  async createInProject(projectId: string, createDeviceDto: CreateDeviceDto, userId: string) {
+    await this.teamScope.assertProjectInTeam(userId, projectId);
     return this.prisma.device.create({
       data: {
         ...createDeviceDto,
@@ -70,8 +71,9 @@ export class DevicesService {
       projectId: string,
       deviceId: string,
       updateDeviceDto: UpdateDeviceDto,
+      userId: string,
   ) {
-    await this.findOneInProject(projectId, deviceId);
+    await this.findOneInProject(projectId, deviceId, userId);
 
     return this.prisma.device.update({
       where: { id: deviceId },
@@ -79,8 +81,8 @@ export class DevicesService {
     });
   }
 
-  async removeFromProject(projectId: string, deviceId: string) {
-    await this.findOneInProject(projectId, deviceId);
+  async removeFromProject(projectId: string, deviceId: string, userId: string) {
+    await this.findOneInProject(projectId, deviceId, userId);
 
     const usageCount = await this.prisma.taskPreference.count({
       where: {

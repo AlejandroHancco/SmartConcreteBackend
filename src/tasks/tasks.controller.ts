@@ -19,10 +19,11 @@ import { TaskPreferencesService } from '../task-preferences/task-preferences.ser
 import { CreateTaskPreferenceDto } from '../task-preferences/dto/create-task-preference.dto';
 import { UpdateTaskPreferenceDto } from '../task-preferences/dto/update-task-preference.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 
 @Controller('tasks')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionGuard)
 export class TasksController {
   constructor(
     private readonly tasksService: TasksService,
@@ -30,43 +31,43 @@ export class TasksController {
   ) {}
 
   @Post()
-  @RequirePermission('tasks:create')
-  create(@Body() createTaskDto: CreateTaskDto) {
-    return this.tasksService.create(createTaskDto);
+  @RequirePermission('task:create')
+  create(@Body() createTaskDto: CreateTaskDto, @Request() req: any) {
+    return this.tasksService.create(createTaskDto, req.user.id);
   }
 
   @Get()
-  @RequirePermission('tasks:read')
-  findAll() {
-    return this.tasksService.findAll();
+  @RequirePermission('task:view')
+  findAll(@Request() req: any) {
+    return this.tasksService.findAll(req.user.id);
   }
 
   @Get(':id')
-  @RequirePermission('tasks:read')
-  findOne(@Param('id') id: string) {
-    return this.tasksService.findOneWithPreference(+id);
+  @RequirePermission('task:view')
+  findOne(@Param('id') id: string, @Request() req: any) {
+    return this.tasksService.findOneWithPreference(+id, req.user.id);
   }
 
   @Patch(':id')
-  @RequirePermission('tasks:update')
-  update(@Param('id') id: string, @Body() updateTaskDto: UpdateTaskDto) {
-    return this.tasksService.update(+id, updateTaskDto);
+  @RequirePermission('task:edit')
+  update(@Param('id') id: string, @Body() updateTaskDto: UpdateTaskDto, @Request() req: any) {
+    return this.tasksService.update(+id, updateTaskDto, req.user.id);
   }
 
   @Delete(':id')
-  @RequirePermission('tasks:delete')
-  remove(@Param('id') id: string) {
-    return this.tasksService.remove(+id);
+  @RequirePermission('task:delete')
+  remove(@Param('id') id: string, @Request() req: any) {
+    return this.tasksService.remove(+id, req.user.id);
   }
 
   @Get(':id/preference')
-  @RequirePermission('tasks:read')
+  @RequirePermission('task:view')
   getPreference(@Param('id', ParseIntPipe) id: number) {
     return this.taskPreferencesService.getTaskPreference(id);
   }
 
   @Post(':id/preference')
-  @RequirePermission('tasks:update')
+  @RequirePermission('task:edit')
   createPreference(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateTaskPreferenceDto,
@@ -75,7 +76,7 @@ export class TasksController {
   }
 
   @Put(':id/preference')
-  @RequirePermission('tasks:update')
+  @RequirePermission('task:edit')
   updatePreference(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateTaskPreferenceDto,
@@ -84,20 +85,20 @@ export class TasksController {
   }
 
   @Delete(':id/preference')
-  @RequirePermission('tasks:delete')
+  @RequirePermission('task:delete')
   removePreference(@Param('id', ParseIntPipe) id: number) {
     return this.taskPreferencesService.removeTaskPreference(id);
   }
 
   @Post(':id/measure')
-  @RequirePermission('measurements:create')
+  @RequirePermission('measurement:execute')
   measure(@Param('id') id: string, @Body() measureDto: MeasureDto, @Request() req: any) {
     return this.tasksService.measure(+id, measureDto, req.user.id);
   }
 
   @Get(':id/measurements')
-  @RequirePermission('measurements:read')
-  getMeasurements(@Param('id') id: string) {
-    return this.tasksService.getMeasurements(+id);
+  @RequirePermission('measurement:view')
+  getMeasurements(@Param('id') id: string, @Request() req: any) {
+    return this.tasksService.getMeasurements(+id, req.user.id);
   }
 }

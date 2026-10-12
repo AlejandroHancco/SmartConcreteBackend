@@ -1,17 +1,29 @@
-import {IsNumber, IsEnum, IsOptional, IsString, IsArray, Min, Max, IsInt} from 'class-validator';
+import { IsEnum, IsOptional, IsString, IsArray, Min, Max, IsNumber, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 
-export class MeasureDto {
+export class FreqRangeDto {
   @IsNumber()
+  @Min(1)
   startFreq: number;
 
   @IsNumber()
+  @Min(1)
   stopFreq: number;
 
   @IsNumber()
+  @Min(1)
+  @Max(801)
   points: number;
 
   @IsEnum(['LOG', 'LIN'])
   sweepType: 'LOG' | 'LIN';
+}
+
+export class MeasureDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => FreqRangeDto)
+  ranges: FreqRangeDto[];
 
   @IsArray()
   @IsNumber({}, { each: true })
@@ -22,6 +34,4 @@ export class MeasureDto {
   @IsOptional()
   @IsString()
   jobId?: string;
-
-  @IsOptional() @IsInt() rangeId?: number;
 }
