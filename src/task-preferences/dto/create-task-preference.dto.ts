@@ -12,6 +12,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsGreaterThan } from '../../common/validators/is-greater-than.decorator';
 
 export class TaskPreferenceRangeDto {
   @IsInt()
@@ -24,6 +25,7 @@ export class TaskPreferenceRangeDto {
 
   @IsNumber()
   @Min(1)
+  @IsGreaterThan('startFreq', { message: 'stopFreq debe ser mayor que startFreq' })
   stopFreq: number;
 
   @IsOptional()

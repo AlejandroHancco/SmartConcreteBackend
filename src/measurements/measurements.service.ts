@@ -1,4 +1,4 @@
-import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TeamScopeService } from '../common/team-scope.service';
 import { MeasurementsGateway } from './measurements.gateway';
@@ -219,9 +219,8 @@ export class MeasurementsService {
       });
 
       if (!taskPreference) {
-        throw new HttpException(
-            'No active task preference found',
-            HttpStatus.NOT_FOUND,
+        throw new BadRequestException(
+            'Esta tarea no tiene un analizador y un MUX asignados. Configúralos antes de medir.',
         );
       }
 

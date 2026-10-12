@@ -16,6 +16,14 @@ export class DashboardService {
     return this.notificationsService.findRecentActivityForTeam(teamId, 10);
   }
 
+  async getActivityLog(
+    userId: string,
+    options: { limit?: number; offset?: number; type?: string },
+  ) {
+    const teamId = await this.teamScope.getTeamId(userId);
+    return this.notificationsService.findActivityLogForTeam(teamId, options);
+  }
+
   async getDashboardStats(userId: string) {
     const teamId = await this.teamScope.getTeamId(userId);
     const teamProjectWhere = this.teamScope.projectTeamWhere(teamId);

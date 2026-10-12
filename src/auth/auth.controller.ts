@@ -43,6 +43,14 @@ export class AuthController {
     return this.authService.getProfile(req.user.id);
   }
 
+  // Reemite el JWT con una expiración fresca; solo funciona mientras el
+  // token actual (el que manda el guard) todavía sea válido.
+  @UseGuards(JwtAuthGuard)
+  @Post('refresh')
+  async refresh(@Request() req) {
+    return this.authService.refresh(req.user.id);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Post('profile')
   getProfile(@Request() req) {

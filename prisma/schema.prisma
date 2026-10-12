@@ -290,7 +290,7 @@ model User {
   userProjectPermissions UserProjectPermission[]
   scheduledJobs    ScheduledJob[]
   teamMembers      TeamMember[]
-  notifications    Notification[]
+  activityEventRecipients ActivityEventRecipient[]
   @@map("users")
   @@schema("platform")
 
@@ -298,11 +298,12 @@ model User {
 }
 
 model Team {
-  id        String       @id @default(uuid())
-  name      String
-  code      String       @unique
-  createdAt DateTime     @default(now())
-  members   TeamMember[]
+  id             String          @id @default(uuid())
+  name           String
+  code           String          @unique
+  createdAt      DateTime        @default(now())
+  members        TeamMember[]
+  activityEvents ActivityEvent[]
 
   @@map("teams")
   @@schema("platform")
@@ -340,19 +341,40 @@ enum MemberStatus {
   @@schema("platform")
 }
 
-model Notification {
+/// Un evento real del equipo (log) — una sola fila por hecho, sin duplicar por destinatario.
+/// Alimenta el feed de "Recent Activity". Ver ActivityEventRecipient para la bandeja personal.
+model ActivityEvent {
   id        Int      @id @default(autoincrement())
-  userId    String   @db.Uuid
+  teamId    String
+  type      String   @db.VarChar(50) // TEAM_APPROVED | TEAM_REJECTED | TEAM_JOIN_REQUEST | MEASUREMENT_COMPLETE | ...
   title     String   @db.VarChar(150)
   message   String   @db.VarChar(500)
-  type      String   @db.VarChar(50) // TEAM_APPROVED | TEAM_REJECTED | TEAM_REQUEST | ...
+  data      Json?
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  team       Team                     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  recipients ActivityEventRecipient[]
+
+  @@index([teamId, createdAt(sort: Desc)], map: "idx_activity_events_team_created")
+  @@map("activity_events")
+  @@schema("platform")
+}
+
+/// Relación evento<->usuario: a quién le llega como notificación personal y si ya la leyó.
+/// No todo ActivityEvent tiene destinatarios — solo lo que amerita avisar a alguien.
+model ActivityEventRecipient {
+  id        Int      @id @default(autoincrement())
+  eventId   Int
+  userId    String   @db.Uuid
   read      Boolean  @default(false)
   createdAt DateTime @default(now()) @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [uuid], onDelete: Cascade)
+  event ActivityEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User          @relation(fields: [userId], references: [uuid], onDelete: Cascade)
 
-  @@index([userId, createdAt(sort: Desc)], map: "idx_notifications_user_created")
-  @@map("notifications")
+  @@unique([eventId, userId])
+  @@index([userId, read, createdAt(sort: Desc)], map: "idx_activity_recipients_user_read")
+  @@map("activity_event_recipients")
   @@schema("platform")
 }
 

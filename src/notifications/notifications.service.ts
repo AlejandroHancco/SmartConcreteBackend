@@ -2,6 +2,8 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { KronosGateway } from '../gateway/kronos.gateway';
 
+const MEASUREMENT_EVENT_TYPES = ['MEASUREMENT_COMPLETE', 'MEASUREMENT_WARNING', 'MEASUREMENT_FAILED'];
+
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
@@ -11,47 +13,83 @@ export class NotificationsService {
     private gateway: KronosGateway,
   ) {}
 
-  /** Crea la notificación in-app en DB y la emite por WebSocket si el usuario está conectado */
-  private async createAndEmit(data: {
-    userId: string;
+  /**
+   * Registra un ActivityEvent (siempre — es el log del equipo) y, si se indican
+   * destinatarios, crea su fila de bandeja personal y les emite por WebSocket.
+   * No todo evento notifica a alguien: eso lo decide cada método de arriba.
+   */
+  private async logEvent(params: {
+    teamId: string;
+    type: string;
     title: string;
     message: string;
-    type: string;
     createdAt?: Date;
+    notifyUserIds?: string[];
   }) {
-    const notification = await this.prisma.notification.create({ data });
-    this.gateway.emitNotification(data.userId, notification);
-    return notification;
+    const event = await this.prisma.activityEvent.create({
+      data: {
+        teamId: params.teamId,
+        type: params.type,
+        title: params.title,
+        message: params.message,
+        createdAt: params.createdAt,
+      },
+    });
+
+    const notifyUserIds = params.notifyUserIds ?? [];
+    if (notifyUserIds.length > 0) {
+      await this.prisma.activityEventRecipient.createMany({
+        data: notifyUserIds.map((userId) => ({ eventId: event.id, userId })),
+        skipDuplicates: true,
+      });
+      for (const userId of notifyUserIds) {
+        this.gateway.emitNotification(userId, {
+          id: event.id,
+          type: event.type,
+          title: event.title,
+          message: event.message,
+          read: false,
+          createdAt: event.createdAt,
+        });
+      }
+    }
+
+    return event;
   }
 
-  async notifyMemberApproved(userId: string, teamName: string) {
-    return this.createAndEmit({
-      userId,
+  // ── Membresía de equipo (personal, un solo destinatario) ───────────────────
+
+  async notifyMemberApproved(userId: string, teamId: string, teamName: string) {
+    await this.logEvent({
+      teamId,
+      type: 'TEAM_APPROVED',
       title: 'Solicitud aprobada',
       message: `Has sido aprobado en ${teamName}`,
-      type: 'TEAM_APPROVED',
+      notifyUserIds: [userId],
     });
   }
 
-  async notifyMemberRejected(userId: string, teamName: string, attemptsLeft: number) {
-    return this.createAndEmit({
-      userId,
+  async notifyMemberRejected(userId: string, teamId: string, teamName: string, attemptsLeft: number) {
+    await this.logEvent({
+      teamId,
+      type: 'TEAM_REJECTED',
       title: 'Solicitud rechazada',
       message: `Tu solicitud en ${teamName} fue rechazada. Te quedan ${attemptsLeft} intentos.`,
-      type: 'TEAM_REJECTED',
+      notifyUserIds: [userId],
     });
   }
 
-  async notifyAdminNewRequest(adminId: string, userName: string, teamName: string) {
-    return this.createAndEmit({
-      userId: adminId,
+  async notifyAdminNewRequest(adminId: string, teamId: string, userName: string, teamName: string) {
+    await this.logEvent({
+      teamId,
+      type: 'TEAM_JOIN_REQUEST',
       title: 'Nueva solicitud',
       message: `${userName} quiere unirse a ${teamName}`,
-      type: 'TEAM_JOIN_REQUEST',
+      notifyUserIds: [adminId],
     });
   }
 
-  // ── Alertas de mediciones ("Kronos Watcher") — broadcast a todo el equipo ──
+  // ── Alertas de mediciones ("Kronos Watcher") — log de equipo + notifica a todos ──
 
   private async getApprovedTeamMemberIds(teamId: string): Promise<string[]> {
     const members = await this.prisma.teamMember.findMany({
@@ -71,19 +109,14 @@ export class NotificationsService {
       message += `\n${deviceNames.join(', ')}`;
     }
 
-    const createdAt = new Date();
     const memberIds = await this.getApprovedTeamMemberIds(teamId);
-    await Promise.all(
-      memberIds.map((userId) =>
-        this.createAndEmit({
-          userId,
-          title: 'Medición correcta',
-          message,
-          type: 'MEASUREMENT_COMPLETE',
-          createdAt,
-        }),
-      ),
-    );
+    await this.logEvent({
+      teamId,
+      type: 'MEASUREMENT_COMPLETE',
+      title: 'Medición correcta',
+      message,
+      notifyUserIds: memberIds,
+    });
   }
 
   async notifyTeamMeasurementWarning(
@@ -97,19 +130,14 @@ export class NotificationsService {
       message += `\n${deviceNames.join(', ')}`;
     }
 
-    const createdAt = new Date();
     const memberIds = await this.getApprovedTeamMemberIds(teamId);
-    await Promise.all(
-      memberIds.map((userId) =>
-        this.createAndEmit({
-          userId,
-          title: 'Advertencia en medición',
-          message,
-          type: 'MEASUREMENT_WARNING',
-          createdAt,
-        }),
-      ),
-    );
+    await this.logEvent({
+      teamId,
+      type: 'MEASUREMENT_WARNING',
+      title: 'Advertencia en medición',
+      message,
+      notifyUserIds: memberIds,
+    });
   }
 
   async notifyTeamMeasurementFailed(
@@ -125,83 +153,95 @@ export class NotificationsService {
       message += `\n${deviceNames.join(', ')}`;
     }
 
-    const createdAt = new Date();
     const memberIds = await this.getApprovedTeamMemberIds(teamId);
-    await Promise.all(
-      memberIds.map((userId) =>
-        this.createAndEmit({
-          userId,
-          title: 'Error al medir',
-          message,
-          type: 'MEASUREMENT_FAILED',
-          createdAt,
-        }),
-      ),
-    );
+    await this.logEvent({
+      teamId,
+      type: 'MEASUREMENT_FAILED',
+      title: 'Error al medir',
+      message,
+      notifyUserIds: memberIds,
+    });
   }
 
   /**
-   * Feed de actividad reciente del equipo (mediciones correctas/warning/fallidas), deduplicado:
-   * como se crea una fila por miembro, se colapsan las filas que comparten
-   * título + mensaje + instante de creación en un solo evento.
+   * Feed de actividad reciente del equipo (mediciones correctas/warning/fallidas).
+   * Una fila = un evento real — ya no hace falta deduplicar nada.
    */
   async findRecentActivityForTeam(teamId: string, limit = 10) {
-    const memberIds = await this.getApprovedTeamMemberIds(teamId);
-    if (memberIds.length === 0) return [];
-
-    const rows = await this.prisma.notification.findMany({
-      where: {
-        userId: { in: memberIds },
-        type: { in: ['MEASUREMENT_COMPLETE', 'MEASUREMENT_WARNING', 'MEASUREMENT_FAILED'] },
-      },
+    return this.prisma.activityEvent.findMany({
+      where: { teamId, type: { in: MEASUREMENT_EVENT_TYPES } },
       orderBy: { createdAt: 'desc' },
-      take: limit * memberIds.length,
+      take: limit,
     });
-
-    const seen = new Set<string>();
-    const deduped: typeof rows = [];
-    for (const row of rows) {
-      const key = `${row.type}-${row.title}-${row.message}-${row.createdAt.getTime()}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      deduped.push(row);
-      if (deduped.length >= limit) break;
-    }
-
-    return deduped;
   }
 
-  // ── Endpoints de lectura ─────────────────────────────────────────────────
+  /**
+   * Log completo de actividad del equipo (todos los tipos de evento, paginado).
+   * A diferencia de la bandeja personal, aquí no hay noción de "leído": es el
+   * historial crudo de lo que pasó en el equipo.
+   */
+  async findActivityLogForTeam(
+    teamId: string,
+    options: { limit?: number; offset?: number; type?: string } = {},
+  ) {
+    const { limit = 20, offset = 0, type } = options;
+    const where = { teamId, ...(type ? { type } : {}) };
+
+    const [items, total] = await Promise.all([
+      this.prisma.activityEvent.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: offset,
+        take: limit,
+      }),
+      this.prisma.activityEvent.count({ where }),
+    ]);
+
+    return { items, total };
+  }
+
+  // ── Bandeja personal (notificaciones) ───────────────────────────────────────
 
   async findForUser(userId: string) {
-    return this.prisma.notification.findMany({
+    const rows = await this.prisma.activityEventRecipient.findMany({
       where: { userId },
-      orderBy: { createdAt: 'desc' },
+      include: { event: true },
+      orderBy: { event: { createdAt: 'desc' } },
       take: 50,
     });
+
+    return rows.map((r) => ({
+      id: r.id,
+      type: r.event.type,
+      title: r.event.title,
+      message: r.event.message,
+      read: r.read,
+      createdAt: r.event.createdAt,
+      data: r.event.data,
+    }));
   }
 
   async countUnread(userId: string) {
-    const count = await this.prisma.notification.count({
+    const count = await this.prisma.activityEventRecipient.count({
       where: { userId, read: false },
     });
     return { unread: count };
   }
 
   async markAsRead(id: number, userId: string) {
-    const notification = await this.prisma.notification.findFirst({
+    const recipient = await this.prisma.activityEventRecipient.findFirst({
       where: { id, userId },
     });
-    if (!notification) throw new NotFoundException('Notification not found');
+    if (!recipient) throw new NotFoundException('Notification not found');
 
-    return this.prisma.notification.update({
+    return this.prisma.activityEventRecipient.update({
       where: { id },
       data: { read: true },
     });
   }
 
   async markAllAsRead(userId: string) {
-    await this.prisma.notification.updateMany({
+    await this.prisma.activityEventRecipient.updateMany({
       where: { userId, read: false },
       data: { read: true },
     });

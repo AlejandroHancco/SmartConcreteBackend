@@ -29,6 +29,13 @@ export class AuthService {
     };
   }
 
+  /** Reemite un JWT propio con expiración fresca, mientras el token actual siga siendo válido. */
+  async refresh(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { uuid: userId } });
+    if (!user) throw new UnauthorizedException('User not found');
+    return this.login(user);
+  }
+
   async register(email: string, name: string, lastName: string | undefined, password: string) {
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = await this.prisma.user.create({

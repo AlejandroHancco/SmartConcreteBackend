@@ -58,7 +58,7 @@ export class TeamsService {
       : user.email;
     await Promise.all(
       admins.map((admin) =>
-        this.notificationsService.notifyAdminNewRequest(admin.userId, applicantName, team.name),
+        this.notificationsService.notifyAdminNewRequest(admin.userId, team.id, applicantName, team.name),
       ),
     );
 
@@ -249,7 +249,7 @@ export class TeamsService {
 
     // Invalidar caché de permisos + notificar al usuario aprobado
     await this.permissionsService.invalidateUserCache(userId);
-    await this.notificationsService.notifyMemberApproved(userId, updated.team.name);
+    await this.notificationsService.notifyMemberApproved(userId, updated.team.id, updated.team.name);
 
     return {
       message: 'Solicitud aprobada',
@@ -293,6 +293,7 @@ export class TeamsService {
     const attemptsLeft = Math.max(0, MAX_REJECTIONS - updatedUser.rejectionCount);
     await this.notificationsService.notifyMemberRejected(
       userId,
+      memberToReject.team.id,
       memberToReject.team.name,
       attemptsLeft,
     );

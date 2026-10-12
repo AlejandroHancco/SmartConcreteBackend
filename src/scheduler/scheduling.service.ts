@@ -22,7 +22,7 @@ export interface MeasurementJobData {
 
 export interface AvailabilityResult {
   available: boolean;
-  reason?: 'queue_full' | 'scheduled_conflict';
+  reason?: 'queue_full' | 'scheduled_conflict' | 'no_preference';
   message?: string;
   /** Duración estimada de ESTA medición (s) */
   estimatedSeconds: number;
@@ -121,6 +121,22 @@ export class MeasurementSchedulingService {
       backlogSeconds,
       maxBacklogSeconds: this.maxBacklogSeconds,
     };
+
+    // Regla 0: la tarea necesita un analyzer y un MUX asignados (TaskPreference)
+    // antes de poder medir — se valida aquí para que el 400 llegue de inmediato
+    // en la respuesta HTTP, no minutos después cuando el worker ya lo intentó.
+    const hasPreference = await this.prisma.taskPreference.findFirst({
+      where: { taskId },
+      select: { id: true },
+    });
+    if (!hasPreference) {
+      return {
+        ...base,
+        available: false,
+        reason: 'no_preference',
+        message: 'Esta tarea no tiene un analizador y un MUX asignados. Configúralos antes de medir.',
+      };
+    }
 
     // Regla 1: cola llena
     if (backlogSeconds + estimatedSeconds > this.maxBacklogSeconds) {

@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { CombinedAuthGuard } from '../auth/combined-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
@@ -21,5 +21,20 @@ export class DashboardController {
   @RequirePermission('project:view')
   getRecentActivity(@CurrentUser() user: NormalizedUser) {
     return this.dashboardService.getRecentActivity(user.id);
+  }
+
+  @Get('activity-log')
+  @RequirePermission('project:view')
+  getActivityLog(
+    @CurrentUser() user: NormalizedUser,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+    @Query('type') type?: string,
+  ) {
+    return this.dashboardService.getActivityLog(user.id, {
+      limit: limit ? parseInt(limit, 10) : undefined,
+      offset: offset ? parseInt(offset, 10) : undefined,
+      type,
+    });
   }
 }
