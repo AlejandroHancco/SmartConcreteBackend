@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Param, Body, UseGuards, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Patch, Param, Body, Req, UseGuards, ParseIntPipe } from '@nestjs/common';
 import { PermissionsService } from './permissions.service';
 import { CombinedAuthGuard } from '../auth/combined-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
@@ -23,10 +23,12 @@ export class PermissionsController {
 
   @Patch('roles/:roleId/permissions')
   @RequirePermission('permission:edit')
-  updateRolePermissions(
+  async updateRolePermissions(
+    @Req() req: any,
     @Param('roleId', ParseIntPipe) roleId: number,
     @Body() body: { permissions: string[] },
   ) {
+    await this.permissionsService.assertCanManageRolePermissions(req.user.id, roleId, body.permissions);
     return this.permissionsService.updateRolePermissions(roleId, body.permissions);
   }
 }

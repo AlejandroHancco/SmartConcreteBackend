@@ -3,10 +3,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TeamScopeService } from '../common/team-scope.service';
 import { MeasurementsGateway } from './measurements.gateway';
 import { KronosGateway } from '../gateway/kronos.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
+import { classifyMeasurement, MeasurementClassification } from './kronos-watcher';
+import { DevicePluginRegistry } from '../device-plugins/device-plugin.registry';
 import { CreateMeasurementDto } from './dto/create-measurement.dto';
 import { UpdateMeasurementDto } from './dto/update-measurement.dto';
-import * as net from 'net';
-import axios from 'axios';
 
 export interface MeasurementRange {
   startFreq: number;
@@ -24,7 +25,36 @@ export class MeasurementsService {
       private teamScope: TeamScopeService,
       private measurementsGateway: MeasurementsGateway,
       private kronosGateway: KronosGateway,
+      private notificationsService: NotificationsService,
+      private devicePlugins: DevicePluginRegistry,
   ) {}
+
+  /** Notifica al equipo del resultado de una medición (según clasificación del Kronos Watcher), sin romper el flujo si falla. */
+  private async notifyTeamOfMeasurementOutcome(
+      userId: string,
+      taskId: number,
+      deviceNames: string[],
+      outcome: MeasurementClassification,
+  ): Promise<void> {
+    try {
+      const teamId = await this.teamScope.getTeamId(userId);
+      const task = await this.prisma.task.findUnique({
+        where: { id: taskId },
+        select: { project: { select: { name: true } } },
+      });
+      const projectName = task?.project?.name ?? `Proyecto de la tarea ${taskId}`;
+
+      if (outcome.severity === 'correct') {
+        await this.notificationsService.notifyTeamMeasurementSuccess(teamId, projectName, deviceNames);
+      } else if (outcome.severity === 'warning') {
+        await this.notificationsService.notifyTeamMeasurementWarning(teamId, projectName, deviceNames, outcome.reason!);
+      } else {
+        await this.notificationsService.notifyTeamMeasurementFailed(teamId, projectName, deviceNames, outcome.reason!, outcome.bare);
+      }
+    } catch (notifyError) {
+      this.logger.warn(`No se pudo notificar al equipo del resultado de la medición: ${notifyError.message}`);
+    }
+  }
 
   async getLatest(userId: string) {
     const teamWhere = await this.teamScope.projectWhereForUser(userId);
@@ -155,6 +185,7 @@ export class MeasurementsService {
       },
   ) {
     const jobId = params.jobId || `${taskId}-${Date.now()}`;
+    let deviceNames: string[] = [];
 
     try {
       this.logger.log(`Starting measurement - Task: ${taskId}, JobId: ${jobId}, Ranges: ${params.ranges.length}`);
@@ -194,6 +225,12 @@ export class MeasurementsService {
         );
       }
 
+      deviceNames = [taskPreference.analyzerDevice.name, taskPreference.muxDevice.name].filter(Boolean);
+
+      // Resuelve el plugin según el tipo del analyzer (device.type) — el Kronos Watcher
+      // no sabe (ni necesita saber) que hoy es un Hioki IM3570.
+      const plugin = this.devicePlugins.get(taskPreference.analyzerDevice.type);
+
       this.logger.log(
           `Preference found - Analyzer: ${taskPreference.analyzerDevice.ip}:3570, MUX: ${taskPreference.muxDevice.ip}`,
       );
@@ -227,23 +264,23 @@ export class MeasurementsService {
 
         try {
           // 4a. Cambiar canal en MUX una sola vez por canal
-          await this.activateMuxChannel(
-              taskPreference.muxDevice.ip ?? '',
-              channel,
-              3,
-          );
+          await plugin.selectChannel(taskPreference.muxDevice.ip ?? '', channel);
 
           // 4b. Medir todos los rangos para este canal
           const channelData: Array<[number, number, number]> = [];
           for (const range of params.ranges) {
-            const rangeData = await this.measureChannel(
-                taskPreference.analyzerDevice.ip ?? '',
-                range.startFreq,
-                range.stopFreq,
-                range.points,
-                range.sweepType,
+            const rangeData = await plugin.measureChannel({
+              analyzerIp: taskPreference.analyzerDevice.ip ?? '',
+              startFreq: range.startFreq,
+              stopFreq: range.stopFreq,
+              points: range.points,
+              sweepType: range.sweepType,
+            });
+            channelData.push(
+                ...rangeData.map(
+                    (p): [number, number, number] => [p.frequency, p.values.g ?? 0, p.values.b ?? 0],
+                ),
             );
-            channelData.push(...rangeData);
           }
 
           this.logger.log(
@@ -367,6 +404,9 @@ export class MeasurementsService {
         totalPoints: measurementData.length,
       });
 
+      const classification = classifyMeasurement(measurementData, uniqueChannels);
+      await this.notifyTeamOfMeasurementOutcome(userId, taskId, deviceNames, classification);
+
       return {
         measurementId: measurement.id,
         takenAt: measurement.takenAt || new Date(),
@@ -383,139 +423,13 @@ export class MeasurementsService {
           error.message,
       );
 
+      await this.notifyTeamOfMeasurementOutcome(userId, taskId, deviceNames, {
+        severity: 'error',
+        reason: error.message,
+      });
+
       throw error;
     }
   }
 
-  /**
-   * Activar canal en MUX (con reintentos)
-   */
-  private async activateMuxChannel(
-      muxIp: string,
-      channel: number,
-      retries: number = 3,
-  ): Promise<void> {
-    for (let attempt = 0; attempt < retries; attempt++) {
-      try {
-        await axios.get(`http://${muxIp}/?orden=${channel}`, {
-          timeout: 5000,
-          validateStatus: () => true,
-        });
-        return; // Éxito
-      } catch (error) {
-        if (attempt === retries - 1) {
-          throw new Error(
-              `Could not activate MUX channel ${channel}: ${error.message}`,
-          );
-        }
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-    }
-  }
-
-  /**
-   * Medir un canal del Hioki IM3570
-   * Lee byte a byte según protocolo SCPI del Hioki
-   * Retorna Promise<Array<[frequency, g, b]>>
-   */
-  private measureChannel(
-      analyzerIp: string,
-      startFreq: number,
-      stopFreq: number,
-      points: number,
-      sweepType: string,
-  ): Promise<Array<[number, number, number]>> {
-    return new Promise((resolve, reject) => {
-      const socket = net.createConnection({ host: analyzerIp, port: 3570 }, () => {
-        socket.setTimeout(60000);
-
-        const setupCommands = [
-          ':MODE ANALyzer',
-          ':SWEep:TRIGger SEQuential',
-          `:LIST:STARt:STOP ${startFreq},${stopFreq},${points},${sweepType}`,
-          ':PARameter1 G',
-          ':PARameter3 B',
-          '*TRG',
-        ];
-
-        (async () => {
-          try {
-            // 1. Enviar comandos de setup sin esperar respuesta
-            for (const cmd of setupCommands) {
-              socket.write(cmd + '\r\n');
-              await new Promise((r) => setTimeout(r, 100));
-            }
-
-            // 2. Enviar :MEASure? y leer respuesta byte a byte
-            socket.write(':MEASure?\r\n');
-
-            const csvRaw = await new Promise<string>((res, rej) => {
-              let response = '';
-              let timeoutHandle: NodeJS.Timeout;
-
-              const onData = (chunk: Buffer) => {
-                for (const byte of chunk) {
-                  const char = String.fromCharCode(byte);
-
-                  // Leer hasta encontrar \n (ignorar \r)
-                  if (char === '\n') {
-                    clearTimeout(timeoutHandle);
-                    socket.removeListener('data', onData);
-                    res(response);
-                    return;
-                  }
-
-                  if (char !== '\r') {
-                    response += char;
-                  }
-                }
-              };
-
-              socket.on('data', onData);
-
-              // Timeout de 55 segundos para esperar datos
-              timeoutHandle = setTimeout(() => {
-                socket.removeListener('data', onData);
-                rej(new Error('Timeout waiting for measurement data'));
-              }, 55000);
-            });
-
-            // 3. Loguear primeros y últimos 100 chars del CSV recibido
-            const csvPreview =
-                csvRaw.length <= 100
-                    ? csvRaw
-                    : `${csvRaw.substring(0, 100)} ... ${csvRaw.substring(csvRaw.length - 100)}`;
-            this.logger.debug(`CSV Response (${csvRaw.length} chars): ${csvPreview}`);
-
-            // 4. Parsear CSV como triplas [freq, g, b]
-            const csvData = csvRaw.split(',');
-            const data: Array<[number, number, number]> = [];
-
-            for (let i = 0; i + 2 < csvData.length; i += 3) {
-              const freq = parseFloat(csvData[i]);
-              const g = parseFloat(csvData[i + 1]);
-              const b = parseFloat(csvData[i + 2]);
-
-              if (!isNaN(freq) && !isNaN(g) && !isNaN(b)) {
-                data.push([freq, g, b]);
-              }
-            }
-
-            socket.destroy();
-            resolve(data);
-
-          } catch (err) {
-            socket.destroy();
-            reject(err);
-          }
-        })();
-      });
-
-      socket.on('error', reject);
-      socket.on('timeout', () => {
-        socket.destroy();
-        reject(new Error('Analyzer connection timeout'));
-      });
-    });
-  }
 }

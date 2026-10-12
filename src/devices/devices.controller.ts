@@ -11,6 +11,7 @@ import {
 import { DevicesService } from './devices.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
+import { UpdateDeviceStatusDto } from './dto/update-device-status.dto';
 import { TestConnectionDto } from './dto/test-connection.dto';
 import { CombinedAuthGuard } from '../auth/combined-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
@@ -79,6 +80,17 @@ export class ProjectDevicesController {
     @CurrentUser() user: NormalizedUser,
   ) {
     return this.devicesService.updateInProject(projectId, deviceId, dto, user.id);
+  }
+
+  @Patch(':deviceId/status')
+  @RequirePermission('device:edit')
+  updateStatus(
+    @Param('projectId') projectId: string,
+    @Param('deviceId') deviceId: string,
+    @Body() dto: UpdateDeviceStatusDto,
+    @CurrentUser() user: NormalizedUser,
+  ) {
+    return this.devicesService.updateStatusInProject(projectId, deviceId, dto, user.id);
   }
 
   @Delete(':deviceId')

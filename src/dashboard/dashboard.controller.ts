@@ -16,4 +16,10 @@ export class DashboardController {
   getStats(@CurrentUser() user: NormalizedUser) {
     return this.dashboardService.getDashboardStats(user.id);
   }
+
+  @Get('recent-activity')
+  @RequirePermission('project:view')
+  getRecentActivity(@CurrentUser() user: NormalizedUser) {
+    return this.dashboardService.getRecentActivity(user.id);
+  }
 }

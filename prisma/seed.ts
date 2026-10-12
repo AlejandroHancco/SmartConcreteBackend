@@ -22,13 +22,13 @@ const ROLES = [
 ];
 
 const TEAM_ADMIN_EXCLUDE = new Set([
-  'team:create', 'team:delete', 'permission:edit', 'role:edit',
+  'team:create', 'team:delete',
 ]);
 
 const PROJECT_MANAGER_EXCLUDE = new Set([
   'team:create', 'team:edit', 'team:delete',
   'member:approve', 'member:reject', 'member:role:edit',
-  'device:delete', 'permission:edit', 'role:edit',
+  'device:delete',
 ]);
 
 const OPERATOR_PERMS = new Set([

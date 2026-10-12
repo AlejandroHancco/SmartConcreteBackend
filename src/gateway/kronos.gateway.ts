@@ -81,4 +81,10 @@ export class KronosGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.server.to(`user:${userId}`).emit('notification', notification);
     this.logger.log(`notification emitted to user:${userId}`);
   }
+
+  /** Cambio de estado online/offline de un dispositivo (broadcast: no es información sensible) */
+  emitDeviceStatusChanged(deviceId: string, projectId: string, status: string) {
+    this.server.emit('device:status', { deviceId, projectId, status });
+    this.logger.log(`device:status ${status} emitted for device ${deviceId}`);
+  }
 }

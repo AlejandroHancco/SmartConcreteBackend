@@ -96,13 +96,44 @@ export class ProjectsService {
       },
     });
 
+    const extras = await this.prisma.userProjectPermission.findMany({
+      where: { projectId },
+      select: { userId: true, permissionId: true },
+    });
+    const extrasByUser = new Map<string, string[]>();
+    for (const e of extras) {
+      extrasByUser.set(e.userId, [...(extrasByUser.get(e.userId) ?? []), e.permissionId]);
+    }
+
     return uprs.map((upr) => ({
       userId: upr.user.uuid,
       name: upr.user.name,
       email: upr.user.email,
       roleId: upr.role.id,
       roleName: upr.role.name,
+      extraPermissions: extrasByUser.get(upr.user.uuid) ?? [],
     }));
+  }
+
+  async updateProjectMemberPermissions(
+    projectId: string,
+    targetUserId: string,
+    permissions: string[],
+    caller: NormalizedUser,
+  ) {
+    await this.teamScope.assertProjectInTeam(caller.id, projectId);
+    await this.permissionsService.assertCanManageMemberPermissions(
+      caller.id,
+      projectId,
+      targetUserId,
+      permissions,
+    );
+    const result = await this.permissionsService.setExtraPermissions(
+      targetUserId,
+      projectId,
+      permissions,
+    );
+    return { userId: targetUserId, projectId, extraPermissions: result };
   }
 
   async updateProjectMemberRole(

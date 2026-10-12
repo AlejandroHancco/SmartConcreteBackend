@@ -3,15 +3,16 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TeamScopeService } from '../common/team-scope.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
+import { UpdateDeviceStatusDto } from './dto/update-device-status.dto';
 import { TestConnectionDto } from './dto/test-connection.dto';
-import * as net from 'net';
-import axios from 'axios';
+import { DevicePluginRegistry } from '../device-plugins/device-plugin.registry';
 
 @Injectable()
 export class DevicesService {
   constructor(
       private prisma: PrismaService,
       private teamScope: TeamScopeService,
+      private devicePlugins: DevicePluginRegistry,
   ) {}
 
   // ── Global: todos los dispositivos de proyectos del equipo del usuario ──────
@@ -81,6 +82,21 @@ export class DevicesService {
     });
   }
 
+  /** Archivar/desarchivar: los demás estados (online/offline) los controla el health check automático. */
+  async updateStatusInProject(
+      projectId: string,
+      deviceId: string,
+      dto: UpdateDeviceStatusDto,
+      userId: string,
+  ) {
+    await this.findOneInProject(projectId, deviceId, userId);
+
+    return this.prisma.device.update({
+      where: { id: deviceId },
+      data: { status: dto.status },
+    });
+  }
+
   async removeFromProject(projectId: string, deviceId: string, userId: string) {
     await this.findOneInProject(projectId, deviceId, userId);
 
@@ -109,35 +125,30 @@ export class DevicesService {
 
   async testConnection(dto: TestConnectionDto) {
     const { type, ip } = dto;
+    const port = dto.port ?? 3570;
 
-    if (type === 'analyzer') {
-      const port = dto.port ?? 3570;
-      return new Promise<{ success: boolean; message: string }>((resolve) => {
-        const socket = net.createConnection({ host: ip, port });
-        socket.setTimeout(2000);
-
-        socket.on('connect', () => {
-          socket.destroy();
-          resolve({ success: true, message: `Hioki IM3570 encontrado en ${ip}:${port}` });
-        });
-
-        socket.on('timeout', () => {
-          socket.destroy();
-          resolve({ success: false, message: `Timeout connecting to analyzer at ${ip}:${port}` });
-        });
-
-        socket.on('error', (err) => {
-          socket.destroy();
-          resolve({ success: false, message: `Error connecting to analyzer: ${err.message}` });
-        });
-      });
-    } else {
-      try {
-        await axios.get(`http://${ip}`, { timeout: 2000 });
-        return { success: true, message: `MUX encontrado en ${ip}` };
-      } catch (err: any) {
-        return { success: false, message: `Error connecting to MUX at ${ip}: ${err.message}` };
-      }
+    const reachable = await this.checkReachable(type, ip, port);
+    if (reachable) {
+      return {
+        success: true,
+        message: type === 'analyzer' ? `Hioki IM3570 encontrado en ${ip}:${port}` : `MUX encontrado en ${ip}`,
+      };
     }
+    return {
+      success: false,
+      message: type === 'analyzer'
+        ? `No se pudo conectar al analyzer en ${ip}:${port}`
+        : `No se pudo conectar al MUX en ${ip}`,
+    };
+  }
+
+  /**
+   * Chequeo crudo de alcanzabilidad (sin mensajes), usado también por el health check
+   * periódico. Delega en el plugin registrado para `type` — un dispositivo nuevo
+   * (type distinto) queda cubierto automáticamente con solo registrar su plugin.
+   */
+  async checkReachable(type: string, ip: string, port = 3570): Promise<boolean> {
+    if (!this.devicePlugins.has(type)) return false;
+    return this.devicePlugins.get(type).testConnection(ip, type, port);
   }
 }

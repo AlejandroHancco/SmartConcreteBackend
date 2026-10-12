@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
+import { PermissionsService } from '../permissions/permissions.service';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -8,6 +9,7 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
+    private permissionsService: PermissionsService,
   ) {}
 
   async validateUser(email: string, password: string): Promise<any> {
@@ -72,6 +74,11 @@ export class AuthService {
     const membership = user.teamMembers[0] ?? null;
     const teamStatus: string = membership ? (membership.status as string) : 'PENDING_TEAM';
 
+    const [permissions, roleNames] = await Promise.all([
+      this.permissionsService.getUserPermissions(uuid),
+      this.permissionsService.getUserRoleNames(uuid),
+    ]);
+
     const { teamMembers, ...rest } = user;
     return {
       ...rest,
@@ -79,6 +86,8 @@ export class AuthService {
       team: membership
         ? { id: membership.team.id, name: membership.team.name, code: membership.team.code }
         : null,
+      permissions,
+      roleNames,
     };
   }
   async checkEmail(email: string): Promise<{

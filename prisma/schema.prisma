@@ -14,6 +14,7 @@ enum DeviceStatus {
   online
   offline
   unchecked
+  archived
   @@schema("platform")
 }
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
@@ -78,9 +79,10 @@ model Measurement {
 }
 
 model Permission {
-  id               String             @id @db.VarChar(100)
-  description      String?
-  rolePermissions  RolePermission[]
+  id                     String                   @id @db.VarChar(100)
+  description            String?
+  rolePermissions        RolePermission[]
+  userProjectPermissions UserProjectPermission[]
 
   @@map("permissions")
   @@schema("platform")
@@ -100,16 +102,31 @@ enum ProjectStatus {
 }
 
 model Project {
-  uuid               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name               String               @db.VarChar(150)
-  description        String?              @db.VarChar(500)
-  createdAt          DateTime?            @default(now()) @db.Timestamptz(6)
-  devices            Device[]
-  tasks              Task[]
-  status             ProjectStatus        @default(draft)
-  userProjectRoles   UserProjectRole[]
+  uuid                   String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                   String                   @db.VarChar(150)
+  description            String?                  @db.VarChar(500)
+  createdAt              DateTime?                @default(now()) @db.Timestamptz(6)
+  devices                Device[]
+  tasks                  Task[]
+  status                 ProjectStatus            @default(draft)
+  userProjectRoles       UserProjectRole[]
+  userProjectPermissions UserProjectPermission[]
 
   @@map("projects")
+  @@schema("platform")
+}
+
+model UserProjectPermission {
+  userId       String     @db.Uuid
+  projectId    String     @db.Uuid
+  permissionId String     @db.VarChar(100)
+  grantedAt    DateTime?  @default(now()) @db.Timestamptz(6)
+  project      Project    @relation(fields: [projectId], references: [uuid], onDelete: Cascade, onUpdate: NoAction)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user         User       @relation(fields: [userId], references: [uuid], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([userId, projectId, permissionId])
+  @@map("user_project_permissions")
   @@schema("platform")
 }
 
@@ -270,6 +287,7 @@ model User {
   createdAt        DateTime?            @default(now()) @db.Timestamptz(6)
   measurements     Measurement[]
   userProjectRoles UserProjectRole[]
+  userProjectPermissions UserProjectPermission[]
   scheduledJobs    ScheduledJob[]
   teamMembers      TeamMember[]
   notifications    Notification[]

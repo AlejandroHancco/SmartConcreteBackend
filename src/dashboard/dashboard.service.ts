@@ -1,13 +1,20 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TeamScopeService } from '../common/team-scope.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class DashboardService {
   constructor(
     private prisma: PrismaService,
     private teamScope: TeamScopeService,
+    private notificationsService: NotificationsService,
   ) {}
+
+  async getRecentActivity(userId: string) {
+    const teamId = await this.teamScope.getTeamId(userId);
+    return this.notificationsService.findRecentActivityForTeam(teamId, 10);
+  }
 
   async getDashboardStats(userId: string) {
     const teamId = await this.teamScope.getTeamId(userId);

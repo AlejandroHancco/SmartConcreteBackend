@@ -19,6 +19,8 @@ import { PermissionsModule } from './permissions/permissions.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
+import { SearchModule } from './search/search.module';
+import { DevicePluginsModule } from './device-plugins/device-plugins.module';
 import { GatewayModule } from './gateway/gateway.module';
 import { RedisModule } from './redis/redis.module';
 import { CommonModule } from './common/common.module';
@@ -41,6 +43,7 @@ import { PrismaModule } from './prisma/prisma.module';
     ]),
     PrismaModule,
     CommonModule,
+    DevicePluginsModule,
     RedisModule,
     GatewayModule,
     AuthModule,
@@ -59,6 +62,7 @@ import { PrismaModule } from './prisma/prisma.module';
     NotificationsModule,
     DashboardModule,
     HealthModule,
+    SearchModule,
   ],
   controllers: [AppController],
   providers: [

@@ -19,6 +19,7 @@ import { CreateTaskDto } from '../tasks/dto/create-task.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { UpdateProjectMemberRoleDto } from './dto/update-project-member-role.dto';
+import { UpdateProjectMemberPermissionsDto } from './dto/update-project-member-permissions.dto';
 import { CreateDeviceDto } from '../devices/dto/create-device.dto';
 import { UpdateDeviceDto } from '../devices/dto/update-device.dto';
 import { CombinedAuthGuard } from '../auth/combined-auth.guard';
@@ -101,6 +102,17 @@ export class ProjectsController {
         @Request() req: any,
     ) {
         return this.projectsService.updateProjectMemberRole(uuid, userId, body.roleId, req.user);
+    }
+
+    @Patch(':uuid/members/:userId/permissions')
+    @RequirePermission('project:edit')
+    updateProjectMemberPermissions(
+        @Param('uuid') uuid: string,
+        @Param('userId') userId: string,
+        @Body() body: UpdateProjectMemberPermissionsDto,
+        @Request() req: any,
+    ) {
+        return this.projectsService.updateProjectMemberPermissions(uuid, userId, body.permissions, req.user);
     }
 
     // ── Tasks ──────────────────────────────────────────────────────────────────
