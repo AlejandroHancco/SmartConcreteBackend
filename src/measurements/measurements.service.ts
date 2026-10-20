@@ -340,9 +340,12 @@ export class MeasurementsService {
       const lastRange = params.ranges[params.ranges.length - 1];
       const totalPoints = params.ranges.reduce((sum, r) => sum + r.points, 0);
 
-      // 7. Guardar medición en DB
+      // 7. Clasificar con el Kronos Watcher y guardar medición en DB
+      const classification = classifyMeasurement(measurementData, uniqueChannels);
       const measurement = await this.prisma.measurement.create({
         data: {
+          watcherStatus: classification.severity,
+          watcherReason: classification.reason ?? null,
           taskId,
           takenBy: userId,
           scheduledJobId: params.scheduledJobId ?? null,
@@ -394,7 +397,6 @@ export class MeasurementsService {
         totalPoints: measurementData.length,
       });
 
-      const classification = classifyMeasurement(measurementData, uniqueChannels);
       await this.notifyTeamOfMeasurementOutcome(userId, taskId, deviceNames, classification);
 
       return {
