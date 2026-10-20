@@ -1,4 +1,4 @@
-import { buildCsv, CSV_HEADER, measurementToRows, CsvMeasurement } from './measurement-csv';
+import { buildCsv, csvPreamble, rowsToCsvLines, CSV_HEADER, measurementToRows, CsvMeasurement } from './measurement-csv';
 
 const channel = (n: number, alias = `Canal ${n}`) => ({
   channelNumber: n, channelAlias: alias, concreteMix: 0.45, hasEmulsifier: false,
@@ -63,5 +63,42 @@ describe('buildCsv', () => {
     };
     const csv = buildCsv([], [withComma]);
     expect(csv).toContain('"ok, revisar"');
+  });
+
+  it('protege metadatos con nombres de tarea/proyecto maliciosos (CSV injection)', () => {
+    // Un nombre de tarea con coma + fórmula no debe "partirse" en columnas evaluables por Excel.
+    const maliciousLine = 'Kronos | Tarea: Viga,=HYPERLINK("http://evil","x")';
+    const csv = buildCsv([maliciousLine], [base]);
+    const firstLine = csv.replace('﻿', '').split('\r\n')[0];
+    // Una sola celda citada: sin comas "sueltas" fuera de las comillas.
+    expect(firstLine.startsWith('"#')).toBe(true);
+    expect(firstLine.endsWith('"')).toBe(true);
+    expect(firstLine).toContain('""http://evil""');
+  });
+});
+
+describe('csvPreamble / rowsToCsvLines', () => {
+  it('csvPreamble: BOM, metadatos citados y encabezado', () => {
+    const preamble = csvPreamble(['Kronos | Tarea: Viga A']);
+    expect(preamble).toBe('﻿# Kronos | Tarea: Viga A\r\n' + CSV_HEADER.join(','));
+  });
+
+  it('csvPreamble cita metadatos con coma y fórmula como una sola celda', () => {
+    const preamble = csvPreamble(['Tarea: Viga,=HACK()']);
+    const [firstLine] = preamble.replace('﻿', '').split('\r\n');
+    expect(firstLine.startsWith('"#')).toBe(true);
+    expect(firstLine.endsWith('"')).toBe(true);
+  });
+
+  it('rowsToCsvLines: una línea por fila, igual que buildCsv sin preámbulo', () => {
+    const lines = rowsToCsvLines(base);
+    expect(lines).toHaveLength(4);
+    expect(lines[0]).toBe(
+      '32,2026-10-12T14:03:00.000Z,Alejandro Hancco,Default,correct,1000,1,Canal 1,0.1,0.01,0.45,false,7,22.5,60,ok',
+    );
+  });
+
+  it('rowsToCsvLines vacío cuando no hay data', () => {
+    expect(rowsToCsvLines({ ...base, data: [] })).toEqual([]);
   });
 });

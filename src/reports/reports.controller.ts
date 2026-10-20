@@ -1,4 +1,4 @@
-import { Controller, Get, Param, ParseIntPipe, Query, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, ParseUUIDPipe, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { CombinedAuthGuard } from '../auth/combined-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
@@ -14,7 +14,10 @@ export class ReportsController {
 
   @Get('tasks')
   @RequirePermission('report:view')
-  listTasks(@CurrentUser() user: NormalizedUser, @Query('projectId') projectId?: string) {
+  listTasks(
+    @CurrentUser() user: NormalizedUser,
+    @Query('projectId', new ParseUUIDPipe({ optional: true })) projectId?: string,
+  ) {
     return this.reportsService.listTasks(user.id, projectId || undefined);
   }
 
@@ -38,8 +41,9 @@ export class ReportsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    const file = await this.reportsService.taskCsv(user.id, taskId, this.reportsService.parseRange(from, to));
-    this.sendCsv(res, file);
+    // parseRange corre (y puede lanzar 400) antes de que streamTaskCsv escriba cualquier encabezado.
+    const range = this.reportsService.parseRange(from, to);
+    await this.reportsService.streamTaskCsv(user.id, taskId, range, res);
   }
 
   @Get('measurement/:id/csv')

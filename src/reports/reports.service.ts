@@ -1,8 +1,20 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { TeamScopeService } from '../common/team-scope.service';
-import { buildCsv, CsvChannel, CsvMeasurement } from './measurement-csv';
+import { buildCsv, csvPreamble, rowsToCsvLines, CsvChannel, CsvMeasurement } from './measurement-csv';
+
+/** Tamaño de página para el streaming de CSV de tarea; evita cargar todas las mediciones en memoria. */
+const CSV_BATCH_SIZE = 10;
+/** Mediciones recientes (más nueva primero) a inspeccionar buscando la última con `data` no vacío. */
+const LATEST_LOOKBACK = 5;
+
+/** Orden estable: por fecha de toma (nulls primero) y, de empate, por id. */
+const takenAtOrder: Prisma.MeasurementOrderByWithRelationInput[] = [
+  { takenAt: { sort: 'asc', nulls: 'first' } },
+  { id: 'asc' },
+];
 
 export interface DateRange { from: Date | null; to: Date | null }
 
@@ -39,6 +51,8 @@ function yyyymmdd(d = new Date()): string {
 
 @Injectable()
 export class ReportsService {
+  private readonly logger = new Logger(ReportsService.name);
+
   constructor(private prisma: PrismaService, private teamScope: TeamScopeService) {}
 
   /** Valida y convierte `from`/`to` (ISO). `to` sin hora incluye el día completo. */
@@ -122,7 +136,7 @@ export class ReportsService {
 
     const measurements = await this.prisma.measurement.findMany({
       where: { taskId, ...this.takenAtWhere(range) },
-      orderBy: { takenAt: 'asc' },
+      orderBy: takenAtOrder,
       select: {
         id: true, takenAt: true, takenByName: true, presetName: true, sweepType: true,
         watcherStatus: true, watcherReason: true,
@@ -130,13 +144,29 @@ export class ReportsService {
       },
     });
 
-    const lastId = measurements.length ? measurements[measurements.length - 1].id : null;
-    const latest = lastId
-      ? await this.prisma.measurement.findUnique({
-          where: { id: lastId },
-          select: { id: true, takenAt: true, sweepType: true, data: true, measurementChannels: { select: channelSelect } },
-        })
-      : null;
+    // La más reciente con datos reales: una medición fallida puede tener `data = []`, en cuyo
+    // caso no debe ocultar el gráfico de una medición anterior válida. Se revisan hasta
+    // LATEST_LOOKBACK mediciones recientes (de más nueva a más vieja) y se toma la primera con
+    // un arreglo `data` no vacío.
+    const recentIds = measurements.slice(-LATEST_LOOKBACK).map((m) => m.id).reverse();
+    let latest: {
+      id: number; takenAt: Date | null; sweepType: string; data: Prisma.JsonValue;
+      measurementChannels: RawChannel[];
+    } | null = null;
+    if (recentIds.length) {
+      const candidates = await this.prisma.measurement.findMany({
+        where: { id: { in: recentIds } },
+        select: { id: true, takenAt: true, sweepType: true, data: true, measurementChannels: { select: channelSelect } },
+      });
+      const byId = new Map(candidates.map((c) => [c.id, c]));
+      for (const id of recentIds) {
+        const candidate = byId.get(id);
+        if (candidate && Array.isArray(candidate.data) && candidate.data.length > 0) {
+          latest = candidate;
+          break;
+        }
+      }
+    }
 
     const pref = task.taskPreferences[0];
     return {
@@ -172,7 +202,7 @@ export class ReportsService {
   private async loadCsvMeasurements(where: Prisma.MeasurementWhereInput): Promise<CsvMeasurement[]> {
     const rows = await this.prisma.measurement.findMany({
       where,
-      orderBy: { takenAt: 'asc' },
+      orderBy: takenAtOrder,
       select: {
         id: true, takenAt: true, takenByName: true, presetName: true, watcherStatus: true, data: true,
         measurementChannels: { select: channelSelect },
@@ -204,17 +234,59 @@ export class ReportsService {
     return { filename: `kronos_${slug(task.name)}_${measurementId}_${yyyymmdd()}.csv`, content };
   }
 
-  async taskCsv(userId: string, taskId: number, range: DateRange): Promise<{ filename: string; content: string }> {
+  /**
+   * CSV de tarea, transmitido en lotes de CSV_BATCH_SIZE mediciones para no cargar todo en
+   * memoria (el backend corre en una Raspberry Pi). Las comprobaciones de equipo/permisos y el
+   * rango deben correr ANTES de escribir cualquier encabezado HTTP, para poder responder 400/404
+   * en JSON (el controller valida el rango con parseRange; este método valida equipo/tarea).
+   */
+  async streamTaskCsv(userId: string, taskId: number, range: DateRange, res: Response): Promise<void> {
     await this.teamScope.assertTaskInTeam(userId, taskId);
     const task = await this.taskHeader(taskId);
-    const measurements = await this.loadCsvMeasurements({ taskId, ...this.takenAtWhere(range) });
-    const rangeText = range.from || range.to
+
+    const hasRange = Boolean(range.from || range.to);
+    const rangeText = hasRange
       ? `${range.from?.toISOString() ?? 'inicio'} a ${range.to?.toISOString() ?? 'hoy'}`
       : 'todo';
-    const content = buildCsv(
-      [`Kronos | Proyecto: ${task.project.name} | Tarea: ${task.name}`, `Generado: ${new Date().toISOString()} | Rango: ${rangeText}`],
-      measurements,
-    );
-    return { filename: `kronos_${slug(task.name)}_todo_${yyyymmdd()}.csv`, content };
+    const filename = `kronos_${slug(task.name)}_${hasRange ? 'rango' : 'todo'}_${yyyymmdd()}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    res.write(csvPreamble([
+      `Kronos | Proyecto: ${task.project.name} | Tarea: ${task.name}`,
+      `Generado: ${new Date().toISOString()} | Rango: ${rangeText}`,
+    ]));
+
+    const where: Prisma.MeasurementWhereInput = { taskId, ...this.takenAtWhere(range) };
+    try {
+      let skip = 0;
+      for (;;) {
+        const rows = await this.prisma.measurement.findMany({
+          where,
+          orderBy: takenAtOrder,
+          skip,
+          take: CSV_BATCH_SIZE,
+          select: {
+            id: true, takenAt: true, takenByName: true, presetName: true, watcherStatus: true, data: true,
+            measurementChannels: { select: channelSelect },
+          },
+        });
+        if (rows.length === 0) break;
+
+        for (const { measurementChannels, ...m } of rows) {
+          const measurement: CsvMeasurement = { ...m, channels: measurementChannels.map(toCsvChannel) };
+          const lines = rowsToCsvLines(measurement);
+          if (lines.length) res.write('\r\n' + lines.join('\r\n'));
+        }
+
+        if (rows.length < CSV_BATCH_SIZE) break;
+        skip += CSV_BATCH_SIZE;
+      }
+    } catch (err) {
+      this.logger.error(`Error transmitiendo CSV de tarea ${taskId}`, err instanceof Error ? err.stack : err);
+    } finally {
+      res.end();
+    }
   }
 }

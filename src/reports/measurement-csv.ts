@@ -1,4 +1,4 @@
-import { toCsvRow } from './csv.util';
+import { toCsvCell, toCsvRow } from './csv.util';
 
 export const CSV_HEADER = [
   'measurement_id', 'taken_at', 'taken_by', 'preset', 'watcher_status',
@@ -65,12 +65,27 @@ export function measurementToRows(m: CsvMeasurement): unknown[][] {
   return rows;
 }
 
-/** CSV completo: BOM (para que Excel lea tildes), metadatos `# ...`, encabezado y filas. */
-export function buildCsv(metaLines: string[], measurements: CsvMeasurement[]): string {
+/**
+ * Preámbulo CSV: BOM (para que Excel lea tildes) + metadatos `# ...` + encabezado.
+ * Cada línea de metadatos se pasa por `toCsvCell` como una sola celda: contiene nombres de
+ * proyecto/tarea controlados por el usuario, así que comas/comillas se citan (RFC 4180) y no
+ * se "parten" en columnas que Excel podría evaluar como fórmula (CSV injection).
+ */
+export function csvPreamble(metaLines: string[]): string {
   const lines = [
-    ...metaLines.map((l) => `# ${l.replace(/[\r\n]+/g, ' ')}`),
+    ...metaLines.map((l) => toCsvCell(`# ${l.replace(/[\r\n]+/g, ' ')}`)),
     CSV_HEADER.join(','),
-    ...measurements.flatMap((m) => measurementToRows(m).map(toCsvRow)),
   ];
   return '﻿' + lines.join('\r\n');
+}
+
+/** Líneas CSV (sin BOM ni encabezado) para una medición; una por (frecuencia, canal medido). */
+export function rowsToCsvLines(m: CsvMeasurement): string[] {
+  return measurementToRows(m).map(toCsvRow);
+}
+
+/** CSV completo: preámbulo + filas de todas las mediciones. */
+export function buildCsv(metaLines: string[], measurements: CsvMeasurement[]): string {
+  const lines = [csvPreamble(metaLines), ...measurements.flatMap(rowsToCsvLines)];
+  return lines.join('\r\n');
 }
