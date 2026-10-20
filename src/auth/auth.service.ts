@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { PermissionsService } from '../permissions/permissions.service';
@@ -34,6 +34,25 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { uuid: userId } });
     if (!user) throw new UnauthorizedException('User not found');
     return this.login(user);
+  }
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    const user = await this.prisma.user.findUnique({ where: { uuid: userId } });
+    if (!user) throw new UnauthorizedException('User not found');
+    if (!user.password) {
+      throw new BadRequestException('Tu cuenta usa Google; no tiene contraseña local');
+    }
+    if (!(await bcrypt.compare(currentPassword, user.password))) {
+      throw new BadRequestException('La contraseña actual es incorrecta');
+    }
+    if (currentPassword === newPassword) {
+      throw new BadRequestException('La nueva contraseña debe ser distinta de la actual');
+    }
+    await this.prisma.user.update({
+      where: { uuid: userId },
+      data: { password: await bcrypt.hash(newPassword, 10) },
+    });
+    return { ok: true };
   }
 
   async register(email: string, name: string, lastName: string | undefined, password: string) {
