@@ -20,6 +20,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
 import { SearchModule } from './search/search.module';
+import { ReportsModule } from './reports/reports.module';
 import { DevicePluginsModule } from './device-plugins/device-plugins.module';
 import { GatewayModule } from './gateway/gateway.module';
 import { RedisModule } from './redis/redis.module';
@@ -60,6 +61,7 @@ import { PrismaModule } from './prisma/prisma.module';
     SchedulerModule,
     PermissionsModule,
     NotificationsModule,
+    ReportsModule,
     DashboardModule,
     HealthModule,
     SearchModule,
