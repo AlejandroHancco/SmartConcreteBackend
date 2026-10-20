@@ -10,7 +10,6 @@ import {
 } from '@nestjs/common';
 import { MeasurementsService } from './measurements.service';
 import { CreateMeasurementDto } from './dto/create-measurement.dto';
-import { UpdateMeasurementDto } from './dto/update-measurement.dto';
 import { UpdateMeasurementChannelDto } from './dto/update-measurement-channel.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
@@ -56,16 +55,6 @@ export class MeasurementsController {
     return this.measurementsService.findOne(+id, user.id);
   }
 
-  @Patch(':id')
-  @RequirePermission('measurement:view')
-  update(
-    @Param('id') id: string,
-    @Body() updateMeasurementDto: UpdateMeasurementDto,
-    @CurrentUser() user: NormalizedUser,
-  ) {
-    return this.measurementsService.update(+id, updateMeasurementDto, user.id);
-  }
-
   @Delete(':id')
   @RequirePermission('measurement:delete')
   remove(@Param('id') id: string, @CurrentUser() user: NormalizedUser) {
@@ -73,7 +62,7 @@ export class MeasurementsController {
   }
 
   @Patch(':id/channels/:channelNumber')
-  @RequirePermission('measurement:view')
+  @RequirePermission('measurement:execute')
   updateMeasurementChannel(
     @Param('id') id: string,
     @Param('channelNumber') channelNumber: string,

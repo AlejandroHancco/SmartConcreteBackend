@@ -7,7 +7,6 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { classifyMeasurement, MeasurementClassification } from './kronos-watcher';
 import { DevicePluginRegistry } from '../device-plugins/device-plugin.registry';
 import { CreateMeasurementDto } from './dto/create-measurement.dto';
-import { UpdateMeasurementDto } from './dto/update-measurement.dto';
 
 export interface MeasurementRange {
   startFreq: number;
@@ -115,14 +114,6 @@ export class MeasurementsService {
       startFreq: Number(measurement.startFreq),
       stopFreq:  Number(measurement.stopFreq),
     };
-  }
-
-  async update(id: number, updateMeasurementDto: UpdateMeasurementDto, userId: string) {
-    await this.teamScope.assertMeasurementInTeam(userId, id);
-    return this.prisma.measurement.update({
-      where: { id },
-      data: updateMeasurementDto,
-    });
   }
 
   async remove(id: number, userId: string) {
