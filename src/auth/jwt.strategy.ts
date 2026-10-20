@@ -27,6 +27,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('User not found');
     }
 
+    // payload.iat está en segundos; un token emitido en el mismo segundo del
+    // cambio de contraseña se acepta (no hay forma de distinguirlo del nuevo token).
+    if (
+      user.passwordChangedAt &&
+      payload.iat < Math.floor(user.passwordChangedAt.getTime() / 1000)
+    ) {
+      throw new UnauthorizedException('La sesión fue cerrada por un cambio de contraseña');
+    }
+
     return {
       id: user.uuid,
       email: user.email,

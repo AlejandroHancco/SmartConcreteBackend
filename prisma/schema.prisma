@@ -289,6 +289,7 @@ model User {
   rejectionCount   Int                  @default(0)
   banned           Boolean              @default(false)
   createdAt        DateTime?            @default(now()) @db.Timestamptz(6)
+  passwordChangedAt DateTime?           @db.Timestamptz(6)
   measurements     Measurement[]
   userProjectRoles UserProjectRole[]
   userProjectPermissions UserProjectPermission[]

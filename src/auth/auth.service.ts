@@ -50,9 +50,11 @@ export class AuthService {
     }
     await this.prisma.user.update({
       where: { uuid: userId },
-      data: { password: await bcrypt.hash(newPassword, 10) },
+      data: { password: await bcrypt.hash(newPassword, 10), passwordChangedAt: new Date() },
     });
-    return { ok: true };
+    // Reemitimos un token fresco para que la sesión que hizo el cambio siga activa
+    // mientras las demás quedan invalidadas por jwt.strategy.
+    return { ok: true, ...(await this.login(user)) };
   }
 
   async register(email: string, name: string, lastName: string | undefined, password: string) {
