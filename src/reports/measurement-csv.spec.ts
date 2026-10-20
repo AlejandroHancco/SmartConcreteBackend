@@ -2,7 +2,7 @@ import { buildCsv, CSV_HEADER, measurementToRows, CsvMeasurement } from './measu
 
 const channel = (n: number, alias = `Canal ${n}`) => ({
   channelNumber: n, channelAlias: alias, concreteMix: 0.45, hasEmulsifier: false,
-  sampleAge: 7, temperature: 22.5, humidity: 60,
+  sampleAge: 7, temperature: 22.5, humidity: 60, notes: 'ok',
 });
 
 const base: CsvMeasurement = {
@@ -24,7 +24,7 @@ describe('measurementToRows', () => {
     expect(rows).toHaveLength(4);
     expect(rows[0]).toEqual([
       32, '2026-10-12T14:03:00.000Z', 'Alejandro Hancco', 'Default', 'correct',
-      1000, 1, 'Canal 1', 0.1, 0.01, 0.45, false, 7, 22.5, 60,
+      1000, 1, 'Canal 1', 0.1, 0.01, 0.45, false, 7, 22.5, 60, 'ok',
     ]);
     expect(rows[1][6]).toBe(2);
     expect(rows[1][8]).toBe(0.2);
@@ -53,5 +53,15 @@ describe('buildCsv', () => {
   it('protege nombres que parecen fórmulas', () => {
     const csv = buildCsv([], [{ ...base, presetName: '=HACK()' }]);
     expect(csv).toContain(",'=HACK(),");
+  });
+
+  it('cita una nota de canal que contiene comas', () => {
+    const withComma: CsvMeasurement = {
+      ...base,
+      channels: [{ ...channel(1), notes: 'ok, revisar' }],
+      data: [{ frequency: 1000, g: [0.1], b: [0.01] }],
+    };
+    const csv = buildCsv([], [withComma]);
+    expect(csv).toContain('"ok, revisar"');
   });
 });

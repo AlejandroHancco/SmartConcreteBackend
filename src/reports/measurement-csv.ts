@@ -3,7 +3,7 @@ import { toCsvRow } from './csv.util';
 export const CSV_HEADER = [
   'measurement_id', 'taken_at', 'taken_by', 'preset', 'watcher_status',
   'frequency_hz', 'channel', 'channel_alias', 'g_s', 'b_s',
-  'concrete_mix', 'has_emulsifier', 'sample_age', 'temperature', 'humidity',
+  'concrete_mix', 'has_emulsifier', 'sample_age', 'temperature', 'humidity', 'notes',
 ];
 
 export interface CsvChannel {
@@ -14,6 +14,7 @@ export interface CsvChannel {
   sampleAge: number | null;
   temperature: number | null;
   humidity: number | null;
+  notes: string | null;
 }
 
 export interface CsvMeasurement {
@@ -57,6 +58,7 @@ export function measurementToRows(m: CsvMeasurement): unknown[][] {
         ch.sampleAge,
         ch.temperature,
         ch.humidity,
+        ch.notes,
       ]);
     }
   }

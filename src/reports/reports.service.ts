@@ -8,7 +8,7 @@ export interface DateRange { from: Date | null; to: Date | null }
 
 const channelSelect = {
   channelNumber: true, channelAlias: true, concreteMix: true, hasEmulsifier: true,
-  sampleAge: true, temperature: true, humidity: true,
+  sampleAge: true, temperature: true, humidity: true, notes: true,
 } satisfies Prisma.MeasurementChannelSelect;
 
 type RawChannel = Prisma.MeasurementChannelGetPayload<{ select: typeof channelSelect }>;
@@ -24,6 +24,7 @@ function toCsvChannel(c: RawChannel): CsvChannel {
     sampleAge: c.sampleAge,
     temperature: num(c.temperature),
     humidity: num(c.humidity),
+    notes: c.notes,
   };
 }
 
